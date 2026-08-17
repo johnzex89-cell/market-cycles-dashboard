@@ -266,6 +266,9 @@ def main() -> int:
         "cape_total": len(cape_vals),
         "cape_since": cape5[0][0] if cape5 else None,
         "cape_prev_record": cape_sorted[1] if len(cape_sorted) > 1 else None,
+        "cape_cheapest": cape_sorted[-1] if cape_sorted else None,
+        # 页面拿这几个标志性时点做对照，避免在前端硬编码数字
+        "cape_examples": [[m, v] for m, v in cape5 if m in ("2009-03", "1982-07")],
         "breadth_rank_n": rank_of(breadth[-1][1], breadth_vals, False) if breadth else None,
         "breadth_total": len(breadth_vals),
         "breadth_since": breadth[0][0] if breadth else None,

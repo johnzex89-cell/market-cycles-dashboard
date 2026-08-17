@@ -105,14 +105,23 @@
 
   <h2 id="method">三层分别是什么，跟原图差在哪</h2>
   <div class="note">
-    <b>上层｜牛熊周期</b>：每一段从 0 开始长出，绿色是牛市累计涨幅、红色是熊市累计跌幅，顶端数字是该段总幅度。<br>
+    <b>上层｜牛熊周期</b>：绿色是牛市累计涨幅、红色是熊市累计跌幅，顶端数字是该段总幅度。<br>
+    <b>相对什么涨的？</b>每根柱子都<b>从 0 重新开始长</b>，起点是上一个转折点（上一轮的顶或底）。
+    所以最右边那根 <span id="p-cur">—</span> 的意思是"<b>从那个低点到现在涨了这么多</b>"，
+    既不是相对去年，也不是相对历史最高点。<br>
     <span class="warn">与原图的差异：</span>原图那 18 段是 Fidelity 人工策展的（它的熊市里有 -15%、-14%、-10%，
     没有统一阈值），无法用公开算法还原。这里改用<b>可复算的规则</b>：月度价格反转
     <b id="p-rev">10%</b> 即确认转势，段幅度按峰到谷全程计。
   </div>
   <div class="note">
-    <b>中层｜估值色带（图的背景色）</b>：红=估值贵、蓝=估值便宜，按原图口径用 <b id="p-cape">5</b> 年 CAPE
-    （实际价格 ÷ 过去 60 个月实际盈利均值），不是常见的 10 年版。<br>
+    <b>中层｜估值色带（图的背景色）</b>：红=贵、蓝=便宜。<br>
+    <b>怎么算的</b>：股价 ÷ 过去 <b id="p-cape">5</b> 年的平均盈利（两者都折算成今天的购买力，
+    消除通胀影响）。相当于问：<b>按它这几年的平均赚钱能力，你花了多少倍的价钱买</b>。
+    <span id="p-cape-eg">—</span><br>
+    <b>什么才叫"贵"</b>：这里的红蓝<b>不是绝对标准，是跟它自己的历史比</b> ——
+    把 <span id="p-cape-n">—</span> 个月份的倍数从低到高排序，当前排得越靠前就越红。
+    <span id="p-cape-rank">—</span><br>
+    （用的是 <b>5 年</b>版本，跟原图一致；常见的 10 年版本目前是 <span id="p-cape10">—</span>。）<br>
     <b>右端那段斜纹是什么意思</b>：<span id="p-lag">—</span><br>
     <b>什么时候会用上更新的盈利</b>：<span id="p-next">—</span>
     看板每天自动抓，新盈利一到就自己补上，斜纹会随之变短，<b>你不用做任何操作</b>。<br>
@@ -156,6 +165,25 @@ function render(d){
     const worst = Math.max(...cross.map(([,o,f])=> f ? Math.abs(o/f-1) : 0));
     devEl.textContent = '<' + (Math.ceil(worst*1000)/10).toFixed(1) + '%';
   }
+
+  // 上层/中层说明里的动态数字，全部来自 data.json，页面不硬编码
+  const X0 = m.context || {};
+  const curEl = document.getElementById('p-cur');
+  if(curEl) curEl.innerHTML = `<b>${F(L.cycle_pct)}</b>（${L.cycle_start} 起）`;
+  const egEl = document.getElementById('p-cape-eg');
+  if(egEl && X0.cape_examples){
+    const eg = X0.cape_examples.map(([mm,v])=>`${mm} 只要 <b>${v}</b> 倍`).join('、');
+    egEl.innerHTML = `现在是 <b>${L.cape5}</b> 倍；对比：${eg}`
+      + (X0.cape_cheapest ? `，史上最便宜的 ${X0.cape_cheapest[0]} 仅 <b>${X0.cape_cheapest[1]}</b> 倍。` : '。');
+  }
+  const nEl = document.getElementById('p-cape-n');
+  if(nEl) nEl.textContent = (X0.cape_total||0).toLocaleString();
+  const rkEl = document.getElementById('p-cape-rank');
+  if(rkEl) rkEl.innerHTML = X0.cape_rank_n===1
+    ? `当前排<b>第 1（${X0.cape_since} 以来最贵）</b>，所以图最右端是最深的红。`
+    : `当前排第 ${X0.cape_rank_n} 贵（共 ${X0.cape_total} 个月）。`;
+  const c10El = document.getElementById('p-cape10');
+  if(c10El) c10El.textContent = L.cape10_reference;
 
   // 斜纹区间的说明：盈利定稿比股价慢几个月，说清楚滞后多久、下次大概什么时候补上
   const eLatest = m.sources.earnings.latest, pLatest = m.sources.price.latest;
