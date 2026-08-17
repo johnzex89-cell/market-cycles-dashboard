@@ -136,9 +136,17 @@ def fetch_french() -> None:
     sections = _split_french_sections(text)
     # 注意分节标题用词不统一：市值加权是 "Value Weight"，等权是 "Equal Weighted"（多个 ed）。
     # 所以按正则匹配而不是精确字符串，避免上游改一个词就抓瞎。
+    #
+    # 🔴 firms / size 两节是**正确加权的必需原料**：十分位收益不能简单平均
+    # （最大一档占全市场 78% 市值却只会拿到 10% 权重 —— 那样算出来的不是市值加权，
+    # 而是把规模维度抹平了，260817 实测导致宽度指标符号都是反的）。
+    #   全市场等权   = Σ Nᵢ·r_ewᵢ / Σ Nᵢ
+    #   全市场市值加权 = Σ (Nᵢ·Sᵢ)·r_vwᵢ / Σ (Nᵢ·Sᵢ)
     wanted = {
         "vw": re.compile(r"Average Value Weight(?:ed)? Returns\s*--\s*Monthly", re.I),
         "ew": re.compile(r"Average Equal Weight(?:ed)? Returns\s*--\s*Monthly", re.I),
+        "firms": re.compile(r"Number of Firms in Portfolios", re.I),
+        "size": re.compile(r"Average Firm Size", re.I),
     }
     out: dict[str, dict] = {}
     for key, pattern in wanted.items():
@@ -157,6 +165,42 @@ def fetch_french() -> None:
                     "sections": out})
 
 
+def fetch_ff3() -> None:
+    """Fama-French 三因子月度表，取 Mkt-RF + RF = 全市场市值加权收益。
+
+    只作**外部校准**用：我们自己用 Number of Firms × Average Firm Size 合成的
+    市值加权全市场收益，必须与它高度吻合（实测平均绝对误差 0.017pp/月）。
+    这是第三层唯一的外部标尺 —— 260817 那个"十分位简单平均"的错口径，
+    正是因为没有这条校准，8 类断言一次都没红过。
+    """
+    url = ("https://mba.tuck.dartmouth.edu/pages/faculty/ken.french/ftp/"
+           "F-F_Research_Data_Factors_CSV.zip")
+    raw = http_get(url)
+    z = zipfile.ZipFile(io.BytesIO(raw))
+    text = z.read(z.namelist()[0]).decode("utf-8", "ignore")
+
+    rows: list[list] = []
+    for line in text.split("\n"):
+        line = line.strip()
+        if not re.match(r"^\d{6},", line):
+            continue
+        parts = [p.strip() for p in line.split(",")]
+        if len(parts) < 5:
+            continue
+        try:
+            mkt_rf, rf = float(parts[1]), float(parts[4])
+        except ValueError:
+            continue
+        if mkt_rf <= -99 or rf <= -99:
+            continue
+        ym = f"{parts[0][:4]}-{parts[0][4:6]}"
+        rows.append([ym, round(mkt_rf + rf, 4)])       # 市值加权全市场总收益（含无风险利率）
+
+    if len(rows) < 900:
+        raise RuntimeError(f"FF3 只解析出 {len(rows)} 个月，疑似格式变化")
+    snapshot("ff3_market", url, rows)
+
+
 def _split_french_sections(text: str) -> dict[str, tuple[list[str], list[list]]]:
     """把 French 的 CSV 切成 {分节标题: (列名, 数据行)}。数据行为 [YYYYMM, v1, v2, ...]。"""
     sections: dict[str, tuple[list[str], list[list]]] = {}
@@ -167,8 +211,10 @@ def _split_french_sections(text: str) -> dict[str, tuple[list[str], list[list]]]
         line = raw_line.strip()
         if not line:
             continue
-        if re.match(r"^[A-Za-z]", line) and "," not in line.split(",")[0][:40] and "--" in line:
-            # 形如 "Average Value Weight Returns -- Monthly"
+        # 分节标题：以字母开头、整行没有数据列。注意标题**不一定含 "--"** ——
+        # "Number of Firms in Portfolios" / "Average Firm Size" 就没有，
+        # 早期只按 "--" 判断把这两节整个漏掉了，而它们正是正确加权所必需的原料。
+        if re.match(r"^[A-Za-z]", line) and not re.match(r"^[^,]*,\s*-?[\d.]", line):
             if current_title and rows:
                 sections[current_title] = (header, rows)
             current_title, header, rows = line, [], []
@@ -190,7 +236,8 @@ SOURCES: list[tuple[str, Callable[[], None]]] = [
     ("标普月度盈利", lambda: fetch_multpl("sp500_earnings", "s-p-500-earnings")),
     ("CPI", lambda: fetch_multpl("cpi", "cpi")),
     ("Shiller CAPE10（交叉验证用）", lambda: fetch_multpl("cape10_reference", "shiller-pe")),
-    ("French 等权/市值加权", fetch_french),
+    ("French 等权/市值加权 + 家数/规模", fetch_french),
+    ("FF3 市场收益（宽度口径的外部校准）", fetch_ff3),
 ]
 
 

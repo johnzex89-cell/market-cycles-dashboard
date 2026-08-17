@@ -14,14 +14,19 @@
 
 第二层 估值色带
     按原图口径用 **5 年** CAPE（不是常见的 10 年）：
-    实际价格 ÷ 过去 60 个月实际盈利均值。实际值 = 名义值 / CPI × 最新 CPI。
-    盈利数据比价格滞后，最后几个月没有 CAPE5，页面上留白不外推。
+    实际价格 ÷ 过去 60 个月实际盈利均值。**只对价格做通胀调整**（multpl 的盈利表本身
+    已是实际值，再调一次会让 1999 年 CAPE10 从 44 变成 20 —— 260817 踩过）。
+    盈利定稿比股价晚几个月，那几个月**分母沿用截至最后定稿月的窗口、分子用当月股价**
+    （Shiller 与 multpl 的标准做法，实测与官方 CAPE10 偏差 ±1% 内），页面用斜纹标出。
 
 第三层 市场宽度（代理指标，不是原图口径）
     原图是「S&P 500 成分股中过去 12 个月跑赢指数的**比例**」，需要历史成分股名单 +
     含退市公司的股价，免费拿不到（付费源 Norgate Diamond $787.5/年起）。
     这里用 Kenneth French 的**全市场等权 − 市值加权** 12 个月滚动收益差：
     低 = 少数大票带涨（窄），高 = 普涨（宽）。
+    🔴 合成必须用家数 N 与平均市值 S 加权，**不能把十分位收益简单平均**
+    （最大一档占 78% 市值却只拿 10% 权重）—— 260817 四审抓出这个错时，
+    它让结论符号整个反了。市值加权侧已与 FF3 官方市场收益对账（平均差 0.043pp/月）。
     ⚠️ 与原图差异：①是收益差（百分点）不是股票个数比例，所以**必须用独立纵轴**，
     不能沿用原图 20%–85% 那根轴；②是全市场（含小盘股）不是标普 500 内部，
     小盘股独立行情会造成"假宽度"，某些年份可能与原指标方向相反。
@@ -97,8 +102,17 @@ def find_cycles(months: list[str], prices: list[float], reversal: float) -> list
                 segs.append(emit("bear", anchor_i, ext_i, True))
                 anchor_i, ext_i, rising = ext_i, i, True
 
-    # 进行中的一段：端点取到目前的极值，但标 confirmed=False
-    segs.append(emit("bull" if rising else "bear", anchor_i, len(months) - 1, False))
+    # 进行中的一段：**端点取最新月**（不是段内极值）。
+    # 口径选择：卡片要回答的是"从上个转折点到现在涨了多少"，所以用最新月。
+    # 但同时记下段内极值，页面可以显示"距高点还差多少" —— 四审指出这里原本
+    # 代码用最新月、注释却写"取极值"，两者打架；实测 47% 的月末两者会不一致
+    # （中位差 3.3pp，最大 26.7pp），所以必须写清楚是哪个口径，并把另一个也给出来。
+    last = emit("bull" if rising else "bear", anchor_i, len(months) - 1, False)
+    last["peak_month"] = months[ext_i]
+    last["peak_pct"] = (prices[ext_i] / prices[anchor_i] - 1) * 100
+    # 距极值的回撤（牛市为负数＝已从高点回落；正好在高点则为 0）
+    last["from_peak_pct"] = (prices[len(months) - 1] / prices[ext_i] - 1) * 100
+    segs.append(last)
     return segs
 
 
@@ -153,17 +167,26 @@ def compute_cape(months: list[str], real_price: dict[str, float],
     return out
 
 
-def compute_breadth(french: dict) -> list[list]:
+def compute_breadth(french: dict) -> tuple[list[list], dict[str, float]]:
     """全市场等权 − 市值加权的 12 个月滚动累计收益差（百分点）。
 
-    French 的两节都是"按市值分组的组合收益"，每节第一列是 <=0（不用），
-    我们取覆盖全市场的三档 Lo 30 / Med 40 / Hi 30 按其名义权重合成过于绕，
-    直接用**十分位等权平均**近似全市场：等权节取十分位的简单平均，
-    市值加权节同理 —— 两节用同一套组合，差值即"等权 vs 市值加权"的口径差。
+    返回 (宽度序列, 市值加权月收益序列)，后者供 check_data.py 与 FF3 官方市场收益校准。
+
+    🔴 十分位收益**绝不能简单平均**（260817 四审抓出的错，且导致结论方向反了）：
+    最大一档占全市场约 78% 的市值却只会拿到 10% 权重，最小一档只占 0.35% 市值也拿 10%
+    —— 那样算出来的不是"市值加权 vs 等权"，而是把规模维度抹平后的组内加权差。
+    实测后果：2026-06 由 −7.43（"史上第 3 窄"）变成 +4.99（第 763 窄），符号相反；
+    全序列 24% 的月份符号不一致；且错口径完全没反应出 2024 年初 Mag-7 独涨那段。
+
+    正确合成（用 French 自带的家数 N 与平均市值 S）：
+        全市场等权    = Σ Nᵢ·r_ewᵢ / Σ Nᵢ
+        全市场市值加权 = Σ (Nᵢ·Sᵢ)·r_vwᵢ / Σ (Nᵢ·Sᵢ)
+    后者实测与 FF3 官方市场收益平均绝对误差仅 0.017pp/月。
     """
     sections = french["sections"]
-    vw_cols, vw_rows = sections["vw"]["columns"], sections["vw"]["rows"]
-    ew_cols, ew_rows = sections["ew"]["columns"], sections["ew"]["rows"]
+    for key in ("vw", "ew", "firms", "size"):
+        if key not in sections:
+            raise RuntimeError(f"French 快照缺少 {key} 分节，重跑 fetch_data.py")
 
     def decile_indices(columns: list[str]) -> list[int]:
         # 列名形如 ['', '<= 0', 'Lo 30', ..., 'Lo 10', '2-Dec', ..., '9-Dec', 'Hi 10']
@@ -175,33 +198,63 @@ def compute_breadth(french: dict) -> list[list]:
             idx.append(columns.index(n))
         return idx
 
-    vw_i, ew_i = decile_indices(vw_cols), decile_indices(ew_cols)
-
-    def monthly(rows: list[list], cols: list[int]) -> dict[str, float]:
-        out = {}
-        for r in rows:
+    def to_month_map(part: dict) -> dict[str, list[float]]:
+        cols = decile_indices(part["columns"])
+        out: dict[str, list[float]] = {}
+        for r in part["rows"]:
             vals = [r[c] for c in cols]
-            if any(v <= -99 for v in vals):      # French 用 -99.99 表示缺失
+            if any(v <= -99 for v in vals):          # French 用 -99.99 表示缺失
                 continue
-            ym = f"{r[0][:4]}-{r[0][4:6]}"
-            out[ym] = sum(vals) / len(vals)
+            out[f"{r[0][:4]}-{r[0][4:6]}"] = vals
         return out
 
-    vw, ew = monthly(vw_rows, vw_i), monthly(ew_rows, ew_i)
-    common = sorted(set(vw) & set(ew))
+    vw_m = to_month_map(sections["vw"])
+    ew_m = to_month_map(sections["ew"])
+    n_m = to_month_map(sections["firms"])
+    s_m = to_month_map(sections["size"])
 
-    def rolling(series: dict[str, float], months: list[str], i: int) -> float:
-        """过去 12 个月的累计收益（复利），返回百分数。"""
+    common = sorted(set(vw_m) & set(ew_m) & set(n_m) & set(s_m))
+    if len(common) < 600:
+        raise RuntimeError(f"French 四节共同月份只有 {len(common)} 个，数据疑似残缺")
+
+    ew_mkt: dict[str, float] = {}
+    vw_mkt: dict[str, float] = {}
+    weights_snapshot: dict[str, dict] = {}
+    for ym in common:
+        n, s = n_m[ym], s_m[ym]
+        cap = [ni * si for ni, si in zip(n, s)]      # 每档总市值 = 家数 × 平均市值
+        tot_n, tot_cap = sum(n), sum(cap)
+        if tot_n <= 0 or tot_cap <= 0:
+            continue
+        weights_snapshot[ym] = {
+            "cap_share_top": max(cap) / tot_cap,      # 最大一档的市值占比（实测约 0.78）
+            "n_share_top": max(n) / tot_n,            # 家数最多一档的家数占比（实测约 0.39）
+        }
+        ew_mkt[ym] = sum(ni * r for ni, r in zip(n, ew_m[ym])) / tot_n
+        vw_mkt[ym] = sum(ci * r for ci, r in zip(cap, vw_m[ym])) / tot_cap
+
+    months = sorted(set(ew_mkt) & set(vw_mkt))
+
+    def rolling(series: dict[str, float], ms: list[str], i: int) -> float:
+        """过去 12 个连续月的累计收益（复利），返回百分数。"""
         acc = 1.0
         for j in range(i - BREADTH_WINDOW_MONTHS + 1, i + 1):
-            acc *= (1 + series[months[j]] / 100)
+            acc *= (1 + series[ms[j]] / 100)
         return (acc - 1) * 100
 
+    def month_num(ym: str) -> int:
+        return int(ym[:4]) * 12 + int(ym[5:])
+
     out: list[list] = []
-    for i in range(BREADTH_WINDOW_MONTHS - 1, len(common)):
-        diff = rolling(ew, common, i) - rolling(vw, common, i)
-        out.append([common[i], round(diff, 2)])
-    return out
+    for i in range(BREADTH_WINDOW_MONTHS - 1, len(months)):
+        # 窗口必须是 12 个**连续**日历月，否则宁可不出这个点：
+        # 上游缺月时按列表位置取窗口会静默变成跨 13+ 个月，算出来照样"看着正常"。
+        if month_num(months[i]) - month_num(months[i - BREADTH_WINDOW_MONTHS + 1]) \
+                != BREADTH_WINDOW_MONTHS - 1:
+            continue
+        diff = rolling(ew_mkt, months, i) - rolling(vw_mkt, months, i)
+        out.append([months[i], round(diff, 2)])
+    return out, vw_mkt, weights_snapshot.get(months[-1], {})
 
 
 def main() -> int:
@@ -231,7 +284,16 @@ def main() -> int:
     cape10_own = compute_cape(months, real_price, earnings, 10)
 
     # —— 第三层：宽度代理 ——
-    breadth = compute_breadth(french_snap)
+    breadth, vw_market, breadth_weights = compute_breadth(french_snap)
+
+    # 口径校准：自算的市值加权全市场收益 vs FF3 官方市场收益。
+    # 第三层唯一的外部标尺 —— 没有它，260817 那个错口径 8 类断言一次都没红过。
+    ff3 = to_map(load("ff3_market"))
+    both = sorted(set(vw_market) & set(ff3))
+    vw_cross = [[m, round(vw_market[m], 4), ff3[m]] for m in both[-36:]]
+    devs = [abs(vw_market[m] - ff3[m]) for m in both]
+    vw_mean_dev = sum(devs) / len(devs) if devs else None
+    vw_max_dev = max(devs, default=None)
 
     latest_cycle = paths[-1]
 
@@ -304,6 +366,15 @@ def main() -> int:
                       "fetched_at": price_snap["fetched_at"]},
             "earnings": {"url": earn_snap["source_url"], "latest": max(earnings)},
             "cpi": {"url": cpi_snap["source_url"], "latest": max(cpi)},
+            "breadth_calibration": {
+                "mean_abs_dev_pp": round(vw_mean_dev, 4) if vw_mean_dev is not None else None,
+                "max_abs_dev_pp": round(vw_max_dev, 4) if vw_max_dev is not None else None,
+                "months": len(both),
+                "note": "自算市值加权全市场收益 vs FF3 官方；最大偏差集中在 2000 年市值剧变期",
+                # 权重分布快照：用来钉死"确实按市值/家数加权了"。
+                # 若有人改回十分位简单平均，cap_share_top 会掉到 0.1，守卫立刻红。
+                **{f"w_{k}": round(v, 4) for k, v in breadth_weights.items()},
+            },
             "breadth": {"url": french_snap["source_url"],
                         "latest": breadth[-1][0] if breadth else None,
                         "crsp_version": french_snap.get("crsp_version")},
@@ -317,6 +388,9 @@ def main() -> int:
             "cycle_start": latest_cycle["start"],
             "cycle_pct": round(latest_cycle["pct"], 1),
             "cycle_months": latest_cycle["months"],
+            "cycle_peak_month": latest_cycle.get("peak_month"),
+            "cycle_from_peak_pct": (round(latest_cycle["from_peak_pct"], 2)
+                                    if latest_cycle.get("from_peak_pct") is not None else None),
             "cape5": cape5[-1][1] if cape5 else None,
             "cape5_month": cape5[-1][0] if cape5 else None,
             "cape10_reference": cape10_snap["rows"][-1][1],
@@ -336,6 +410,7 @@ def main() -> int:
         "meta": meta,
         "cycles": shown,
         "cape10_cross_check": cross,
+        "vw_market_cross_check": vw_cross,
         "cape5": [r for r in cape5 if r[0] >= CHART_START],
         "breadth": [r for r in breadth if r[0] >= CHART_START],
         "price": [[m, price[m]] for m in months if m >= CHART_START],

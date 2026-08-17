@@ -21,6 +21,11 @@
   .wrap{ max-width:1180px; margin:0 auto; padding:28px 18px 60px; }
   h1{ font-size:23px; margin:0 0 6px; letter-spacing:-.2px; }
   .sub{ color:var(--muted); font-size:13px; margin-bottom:22px; }
+  #freshness{ font-size:12.5px; border:1px solid var(--line); background:var(--card);
+              border-radius:8px; padding:9px 13px; margin-bottom:14px; color:var(--muted); }
+  #freshness b{ color:var(--fg); font-weight:600; }
+  #freshness.stale{ border-color:var(--bear); color:var(--bear); }
+  #freshness.stale b{ color:var(--bear); }
   .cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:22px; }
   .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
   .card .k{ font-size:12px; color:var(--muted); margin-bottom:4px; }
@@ -47,7 +52,9 @@
               border-radius:1px; box-shadow:0 0 0 1.5px var(--card); }
   .chartbox{ border:1px solid var(--line); border-radius:12px; overflow-x:auto; overflow-y:hidden;
              background:var(--card); -webkit-overflow-scrolling:touch; position:relative; }
-  .chartbox svg{ display:block; min-width:1080px; touch-action:pan-y; }
+  /* 🔴 touch-action 必须允许横向：实测 pan-y 会让手机完全滑不动，
+     只看得见 1961-1981 那 32.6%，当前这轮牛市根本看不到 */
+  .chartbox svg{ display:block; min-width:1080px; touch-action:pan-x pan-y; }
   /* 桌面上不强制最小宽度：整张图完整显示，才能拉框放大（手机保留横向滚动） */
   @media (min-width:1000px){ .chartbox svg{ min-width:0; width:100%; } }
   .hint{ font-size:12px; color:var(--muted); margin:8px 2px 26px;
@@ -84,6 +91,7 @@
     参考 Fidelity「Market Cycles」的结构，全部改用公开数据自建口径（<a href="#method">口径说明</a>）
   </div>
 
+  <div id="freshness"></div>
   <div class="cards" id="cards"></div>
 
   <!-- 图例：这张图上"柱子"和"背景色"是两套独立的信息，不说清楚会看不懂 -->
@@ -135,7 +143,11 @@
     1961 年以来离开标普 500 的公司约 700 家）。这里用 Kenneth French 的
     <b>全市场等权 − 市值加权，12 个月滚动收益差</b>代替，单位是百分点，
     <b>所以用了独立纵轴，不能当成"百分之多少的股票跑赢"来读</b>。
-    它是全市场口径（含小盘股），个别年份可能与原指标方向相反。
+    它是全市场口径（含小盘股），个别年份可能与原指标方向相反。<br>
+    <span class="m2">口径已与 Fama-French 官方市场收益逐月对账（平均差
+    <b id="p-bdev">—</b> 个百分点，共 <span id="p-bmon">—</span> 个月），每天自动比对。
+    参照点：2024 年初「七巨头」独涨时这条线是 <b>−29</b>（历史第 2 窄），
+    当前 <b id="p-bnow">—</b>。</span>
   </div>
 
   <h2>周期明细</h2>
@@ -145,13 +157,22 @@
 </div>
 
 <script>
-// 先按精度取整再判符号，否则 -0.04 会显示成 "-0.0%"
-const F = (n, d=1) => { const r = +n.toFixed(d); return (r>=0?'+':'') + r.toFixed(d) + '%'; };
+// 直接看四舍五入后的字符串定符号：JS 里 -0 >= 0 为 true，
+// 先转数字再判会把 -0.04 显示成 "+0.0%"（上一版就栽在这），四舍五入到 0 就不带正负号。
+const F = (n, d=1) => {
+  const s = Math.abs(n).toFixed(d);
+  if (+s === 0) return s + '%';
+  return (n < 0 ? '-' : '+') + s + '%';
+};
 
 fetch('data.json?t=' + Date.now()).then(r=>r.json()).then(render).catch(e=>{
   document.getElementById('cards').innerHTML =
     '<div class="card"><div class="k">加载失败</div><div class="v">—</div><div class="n">'+e+'</div></div>';
 });
+
+// data.json 来自第三方网页表格 + 自动抓取 + 自动提交，任一环被污染都会变成可执行 HTML
+const H = v => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
+                              .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
 function render(d){
   const m = d.meta, L = m.latest, P = m.params;
@@ -164,6 +185,31 @@ function render(d){
   if(devEl && cross.length){
     const worst = Math.max(...cross.map(([,o,f])=> f ? Math.abs(o/f-1) : 0));
     devEl.textContent = '<' + (Math.ceil(worst*1000)/10).toFixed(1) + '%';
+  }
+
+  // —— 顶部状态条：什么时候更新的、下次什么时候更新、是不是已经停更 ——
+  // 没有这条的话，自动更新挂几天页面照样"正常"显示旧数据，看的人完全不知情。
+  const fresh = document.getElementById('freshness');
+  if(fresh){
+    const gen = new Date(m.generated_at);
+    const ageH = (Date.now() - gen.getTime()) / 36e5;
+    const ageTxt = ageH < 1 ? '刚刚' : ageH < 24 ? `${Math.floor(ageH)} 小时前`
+                 : `${Math.floor(ageH/24)} 天前`;
+    // CI 每天 UTC 12:00（北京 20:00）跑一次，据此推下一次
+    const next = new Date();
+    next.setUTCHours(12, 0, 0, 0);
+    if(next.getTime() <= Date.now()) next.setUTCDate(next.getUTCDate() + 1);
+    const fmt = t => `${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-`
+                   + `${String(t.getDate()).padStart(2,'0')} ${String(t.getHours()).padStart(2,'0')}:`
+                   + `${String(t.getMinutes()).padStart(2,'0')}`;
+    const stale = ageH > 24 * 3;
+    fresh.className = stale ? 'stale' : '';
+    fresh.innerHTML = (stale ? '⚠️ <b>数据可能已过期</b>：' : '')
+      + `数据更新于 <b>${fmt(gen)}</b>（${ageTxt}）　·　下次自动更新 <b>${fmt(next)}</b>`
+      + `　·　各层数据截止：股价 <b>${H(m.sources.price.latest)}</b>、`
+      + `盈利 ${H(m.sources.earnings.latest)}、CPI ${H(m.sources.cpi?.latest ?? '—')}、`
+      + `宽度 ${H(m.sources.breadth.latest)}`
+      + (stale ? '　——超过 3 天没更新，自动更新可能已中断' : '');
   }
 
   // 上层/中层说明里的动态数字，全部来自 data.json，页面不硬编码
@@ -184,6 +230,13 @@ function render(d){
     : `当前排第 ${X0.cape_rank_n} 贵（共 ${X0.cape_total} 个月）。`;
   const c10El = document.getElementById('p-cape10');
   if(c10El) c10El.textContent = L.cape10_reference;
+  const cal = m.sources.breadth_calibration || {};
+  const bdev = document.getElementById('p-bdev');
+  if(bdev && cal.mean_abs_dev_pp != null) bdev.textContent = cal.mean_abs_dev_pp.toFixed(3);
+  const bmon = document.getElementById('p-bmon');
+  if(bmon && cal.months) bmon.textContent = cal.months;
+  const bnow = document.getElementById('p-bnow');
+  if(bnow && L.breadth != null) bnow.textContent = F(L.breadth);
 
   // 斜纹区间的说明：盈利定稿比股价慢几个月，说清楚滞后多久、下次大概什么时候补上
   const eLatest = m.sources.earnings.latest, pLatest = m.sources.price.latest;
@@ -221,7 +274,16 @@ function render(d){
   const capeTop = X.cape_rank_n === 1
       ? `<b>${X.cape_since?.slice(0,4)} 年以来最贵</b>`
       : `${X.cape_since?.slice(0,4)} 年以来第 ${X.cape_rank_n} 贵`;
-  const brRank = X.breadth_rank_n <= 3 ? `<b>第 ${X.breadth_rank_n} 窄</b>` : `第 ${X.breadth_rank_n} 窄`;
+  // 宽度的名次表述：偏宽的时候说"第几窄"很别扭，只有真进前后十名才报名次，否则用分位
+  const bv = L.breadth;
+  let brDesc = '—';
+  if(bv != null && X.breadth_rank_n && X.breadth_total){
+    const since = X.breadth_since ? X.breadth_since.slice(0,4) : '';
+    if(X.breadth_rank_n <= 10) brDesc = `<b>${since} 年以来第 ${X.breadth_rank_n} 窄</b>`;
+    else if(X.breadth_rank_n >= X.breadth_total - 10)
+      brDesc = `<b>${since} 年以来第 ${X.breadth_total - X.breadth_rank_n + 1} 宽</b>`;
+    else brDesc = `比历史 ${Math.round(X.breadth_rank_n / X.breadth_total * 100)}% 的月份更宽`;
+  }
 
   document.getElementById('cards').innerHTML = [
     ['当前处于', `<span class="${cls}">${kindTxt}</span>`,
@@ -231,7 +293,9 @@ function render(d){
      + `历史上（${X.cycles_since?.slice(0,4)} 年以来）${sample} 段${kindTxt}的中位时长是 ${medMon} 个月。`],
 
     ['本轮幅度', `<span class="${cls}">${F(L.cycle_pct)}</span>`,
-     `${L.cycle_start} 低点至今的涨幅<br>历史${kindTxt}中位 ${medPct>0?'+':''}${medPct}%`,
+     `${H(L.cycle_start)} 低点至今的涨幅<br>历史${kindTxt}中位 ${medPct>0?'+':''}${medPct}%`
+     + (L.cycle_from_peak_pct != null && Math.abs(L.cycle_from_peak_pct) >= 0.05
+        ? `<br>距本轮高点 ${F(L.cycle_from_peak_pct)}` : '<br>目前就在本轮高点'),
      `从 ${L.cycle_start} 的转折点到现在，标普 500 一共${isBull?'涨':'跌'}了 ${Math.abs(L.cycle_pct)}%。`
      + `历史上 ${sample} 段${kindTxt}的中位幅度是 ${medPct}%，所以这一轮目前属于`
      + `${X.cycle_pct_rank>=67?'偏大':X.cycle_pct_rank<=33?'偏小':'中等'}水平。`],
@@ -246,13 +310,15 @@ function render(d){
      + `当前 ${L.cape5} 在 ${X.cape_since} 以来的 ${X.cape_total} 个月里排第 ${X.cape_rank_n}。`
      + `常见的 10 年版本目前是 ${L.cape10_reference}。`],
 
-    ['市场宽度', L.breadth==null ? '—' : F(L.breadth),
-     `普通股落后大盘股 ${Math.abs(L.breadth).toFixed(1)} 个百分点<br>`
-     + `${X.breadth_since?.slice(0,4)} 年以来${brRank}`,
-     `过去 12 个月，"每只股票同等权重"的组合比"大公司占大头"的组合落后了 `
-     + `${Math.abs(L.breadth).toFixed(1)} 个百分点。落后越多，说明这波涨得越集中在少数巨头身上。`
-     + `${X.breadth_since} 以来第 ${X.breadth_rank_n} 窄；最窄的一次是 ${X.breadth_record?.[0]}（${X.breadth_record?.[1]}），`
-     + `正是科网泡沫顶部。`],
+    ['市场宽度', bv==null ? '—' : F(bv),
+     bv==null ? '数据暂缺'
+       : `普通股${bv<0?'落后':'领先'}大盘股 ${Math.abs(bv).toFixed(1)} 个百分点<br>${brDesc}`,
+     bv==null ? '宽度数据暂时缺失，通常是上游 French 数据库尚未发布最新月份。'
+       : `过去 12 个月，"每只股票同等权重"的组合比"大公司占大头"的组合`
+         + `${bv<0?'落后':'领先'}了 ${Math.abs(bv).toFixed(1)} 个百分点。`
+         + `落后越多＝涨幅越集中在少数巨头身上；领先＝普涨。`
+         + `${X.breadth_since} 以来共 ${X.breadth_total} 个月，当前${brDesc}。`
+         + `历史最窄是 ${X.breadth_record?.[0]}（${X.breadth_record?.[1]} 个百分点）。`],
   ].map(([k,v,n,tip])=>`<div class="card"${tip?` data-tip="${tip.replace(/"/g,'&quot;')}"`:''}>`
       + (tip?`<span class="i">i</span>`:'')
       + `<div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`).join('');
