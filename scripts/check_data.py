@@ -28,6 +28,7 @@ CAPE_MIN, CAPE_MAX = 4.0, 70.0         # 历史极值 5.6(1932) ~ 44(1999)，留
 MIN_CAPE_POINTS = 600
 MIN_BREADTH_POINTS = 600
 MAX_LATEST_PRICE_JUMP = 0.35           # 单次更新价格跳动超过 35% ⟹ 多半是单位/口径变了
+MAX_CAPE_DEVIATION = 0.03              # 自算 CAPE10 与 multpl 官方值的最大容许偏差（实测 0.9%）
 
 
 def month_to_date(ym: str) -> dt.date:
@@ -102,7 +103,25 @@ def main() -> int:
             failures.append(f"{m1}→{m2} 价格跳动 {(p2/p1-1)*100:.0f}%，疑似口径/单位变化")
             break
 
-    # 7. 最新一段必须是"进行中"，其余必须是已确认（画图逻辑依赖这个前提）
+    # 7. 估值口径交叉验证：自算 CAPE10 必须贴合 multpl 官方 CAPE10。
+    #    这是估值层唯一的外部校准点。260817 就是靠它发现「盈利被双重通胀调整」——
+    #    那个 bug 让 1999-12 的 CAPE10 从 44 掉到 20，图上早期年份的冷热全反了，
+    #    而所有内部断言（区间、点数、新鲜度）全都照样绿。
+    cross = d.get("cape10_cross_check") or []
+    check(len(cross) >= 12, f"CAPE 交叉验证样本只有 {len(cross)} 个月（应 ≥12）")
+    if cross:
+        worst_m, worst_dev = None, 0.0
+        for m, own, official in cross:
+            if official:
+                dev = abs(own / official - 1)
+                if dev > worst_dev:
+                    worst_m, worst_dev = m, dev
+        check(worst_dev <= MAX_CAPE_DEVIATION,
+              f"自算 CAPE10 与官方值最大偏差 {worst_dev*100:.1f}%（{worst_m}），"
+              f"超过 {MAX_CAPE_DEVIATION*100:.0f}% ⟹ 估值口径可能又漂了")
+        print(f"  估值口径交叉验证：最大偏差 {worst_dev*100:.2f}%（{worst_m}）")
+
+    # 8. 最新一段必须是"进行中"，其余必须是已确认（画图逻辑依赖这个前提）
     check(cycles[-1]["confirmed"] is False, "最后一段应标记为进行中")
     check(all(c["confirmed"] for c in cycles[:-1]), "存在非最后一段却未确认的周期")
 
@@ -117,7 +136,7 @@ def main() -> int:
         for f_ in failures:
             print(f"   - {f_}")
         return 1
-    print(f"\n✅ 自检通过（{7} 类断言）")
+    print(f"\n✅ 自检通过（8 类断言）")
     return 0
 
 

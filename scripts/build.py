@@ -114,26 +114,39 @@ def cycle_paths(months: list[str], prices: list[float], cycles: list[dict]) -> l
     return out
 
 
-def real_series(nominal: dict[str, float], cpi: dict[str, float],
-                base_cpi: float) -> dict[str, float]:
-    """名义 → 实际（用最新 CPI 作基准，跟 Shiller 的做法一致）。"""
-    return {m: v / cpi[m] * base_cpi for m, v in nominal.items() if m in cpi}
+def real_price_series(nominal: dict[str, float], cpi: dict[str, float],
+                      base_cpi: float) -> dict[str, float]:
+    """名义价格 → 实际价格（用最新 CPI 作基准，跟 Shiller 的做法一致）。
+
+    🔴 只对**价格**做这个换算。multpl 的盈利表本身已经是通胀调整后的实际盈利
+    （实测判据：与 Shiller 的 Real Earnings 列比值 1.09 —— 正好是两者基准年之差的通胀；
+    与名义 Earnings 列比值 15.25，完全对不上）。对盈利再调一次＝双重调整，
+    会让越早的年份分母被放大得越狠：1999-12 的 CAPE10 会从 44 掉到 20。
+    CPI 未公布的最新月份沿用最后已知值（一两个月影响 <1%）。
+    """
+    last = cpi[max(cpi)]
+    return {m: v / cpi.get(m, last) * base_cpi for m, v in nominal.items()}
 
 
 def compute_cape(months: list[str], real_price: dict[str, float],
-                 real_earnings: dict[str, float]) -> list[list]:
-    """5 年 CAPE：实际价格 ÷ 过去 60 个月实际盈利均值。盈利不足 60 个月的月份跳过。"""
+                 real_earnings: dict[str, float], years: int) -> list[list]:
+    """CAPE：实际价格 ÷ 过去 N 年实际盈利均值。
+
+    盈利定稿比股价滞后几个月。对盈利尚未公布的最新月份，**分母沿用截至最后已知盈利月的
+    窗口**（分子仍用当月价格）—— 这正是 Shiller 与 multpl 的标准做法，实测与 multpl
+    官方 CAPE10 偏差在 ±1% 以内。这样估值色带能跟股价一样更新到最新月份。
+    """
+    n = years * 12
     e_months = sorted(real_earnings)
-    e_idx = {m: i for i, m in enumerate(e_months)}
     out: list[list] = []
     for m in months:
-        if m not in real_price or m not in e_idx:
+        if m not in real_price:
             continue
-        i = e_idx[m]
-        if i < CAPE_MONTHS - 1:
+        upto = [em for em in e_months if em <= m]
+        if len(upto) < n:
             continue
-        window = [real_earnings[e_months[j]] for j in range(i - CAPE_MONTHS + 1, i + 1)]
-        avg = sum(window) / CAPE_MONTHS
+        window = [real_earnings[em] for em in upto[-n:]]
+        avg = sum(window) / n
         if avg <= 0:
             continue          # 大萧条等盈利为负的时期，CAPE 无意义
         out.append([m, round(real_price[m] / avg, 2)])
@@ -212,9 +225,10 @@ def main() -> int:
 
     # —— 第二层：5 年 CAPE ——
     base_cpi = cpi[max(cpi)]
-    real_price = real_series(price, cpi, base_cpi)
-    real_earn = real_series(earnings, cpi, base_cpi)
-    cape5 = compute_cape(months, real_price, real_earn)
+    real_price = real_price_series(price, cpi, base_cpi)
+    cape5 = compute_cape(months, real_price, earnings, CAPE_YEARS)
+    # 同法自算 10 年版，仅用于跟 multpl 官方 CAPE10 交叉验证口径有没有漂（见 check_data.py）
+    cape10_own = compute_cape(months, real_price, earnings, 10)
 
     # —— 第三层：宽度代理 ——
     breadth = compute_breadth(french_snap)
@@ -254,9 +268,17 @@ def main() -> int:
         },
     }
 
+    # 口径交叉验证：自算 CAPE10 vs multpl 官方 CAPE10，最近两年逐月比对。
+    # 这是整个估值层唯一的外部校准点 —— 双重通胀调整那类 bug 只有它能抓出来。
+    official10 = dict(cape10_snap["rows"])
+    own10 = dict(cape10_own)
+    cross = [[m, own10[m], official10[m]]
+             for m in sorted(set(own10) & set(official10))[-24:]]
+
     out = {
         "meta": meta,
         "cycles": shown,
+        "cape10_cross_check": cross,
         "cape5": [r for r in cape5 if r[0] >= CHART_START],
         "breadth": [r for r in breadth if r[0] >= CHART_START],
         "price": [[m, price[m]] for m in months if m >= CHART_START],
