@@ -148,6 +148,38 @@
     它的价值是<b>把最坏情况压下来</b>，不是保证赚钱。
   </div>
 
+  <h2 id="timing">那要不要逃顶？——数据说：不要</h2>
+  <div class="note" style="border-left-color:var(--bear)">
+    <b>结论先说</b>：这张图擅长回答"跌下来该加多少"，<b>不擅长回答"什么时候该跑"</b>。
+    这两件事的历史胜率完全不对称 —— <b>抄底有据可依，逃顶没有</b>。下面是回测证据。
+  </div>
+  <table id="tm-table"></table>
+  <div class="note" style="margin-top:12px">
+    <b>① 用估值逃顶是最差的选择</b>：<span id="tm-val">—</span><br>
+    更要命的是<b>估值可以在高位待很多年</b>：<span id="tm-runs">—</span>
+    如果那时候因为"太贵"跑了，就会错过后面整整一段大牛市。
+  </div>
+  <div class="note">
+    <b>② 趋势止损看起来很美，算上摩擦就没了</b>：<span id="tm-ma">—</span><br>
+    <span class="m2">摩擦是两条：你没法在"月均价"那个点成交（延迟 1 个月）、每次卖出要对浮盈交税
+    （按 <span id="tm-tax">—</span>% 算）。<span id="tm-trades">—</span> 次进出的摩擦足以吃光全部超额收益。
+    除非这笔钱在免税/递延账户里，否则不划算。</span>
+  </div>
+  <div class="note">
+    <b>③ 那能做什么（都不是"逃顶"）</b><br>
+    <b>控制总仓位</b>：与其猜顶，不如一开始就别把仓位放到"跌 50% 会睡不着"的程度 ——
+    <span id="tm-mdd">—</span> 是真实发生过的。<br>
+    <b>不加杠杆</b>：在估值史上最贵的位置加杠杆，是唯一能把"长期正期望"变成"永久性亏损"的操作。<br>
+    <b>按比例再平衡</b>：股票占比因大涨超出目标（如 70%→85%）就卖回 70%。
+    这是<b>基于比例的机械动作，不是基于预测</b>，天然实现"涨多了卖一点、跌多了买一点"。
+  </div>
+  <div class="note" style="border-left-color:var(--bear)">
+    <span class="warn">最后一句实话</span>：以上都是<b>美股</b>这 <span id="tm-years">—</span> 年的统计，
+    而美股这段历史本身是全球幸存者（同期日本股市 1989 年的高点至今未收复）。
+    所以真正的结论不是"永远满仓最好"，而是 ——
+    <b>在你能承受的仓位内满仓，比试图择时更好</b>。
+  </div>
+
   <h2 id="method">三层分别是什么，跟原图差在哪</h2>
   <div class="note">
     <b>上层｜牛熊周期</b>：绿色是牛市累计涨幅、红色是熊市累计跌幅，顶端数字是该段总幅度。<br>
@@ -362,6 +394,7 @@ function render(d){
   bindCardTips();
 
   drawPlaybook(d);
+  drawTiming(d);
   drawChart(d);
   drawTable(d);
 
@@ -769,6 +802,40 @@ function drawPlaybook(d){
   if(cw) cw.textContent = X.cape_rank_n === 1
     ? `当前估值是 ${X.cape_since?.slice(0,4)} 年以来最贵的一个月。`
     : `当前估值排历史第 ${X.cape_rank_n} 贵（共 ${X.cape_total} 个月）。`;
+}
+
+// ============ 择时回测：为什么不建议逃顶 ============
+function drawTiming(d){
+  const t = d.timing; if(!t || !t.hold) return;
+  const row = (label, s, note='') =>
+    `<tr${s.final===t.hold.final?' style="font-weight:600"':''}><td>${H(label)}</td>`
+    + `<td>${s.final}x</td><td>${s.cagr_pct}%</td><td>${s.mdd_pct}%</td>`
+    + `<td class="act">${s.trades ? s.trades+' 次进出' : '不动'}${note}</td></tr>`;
+  document.getElementById('tm-table').innerHTML =
+    `<thead><tr><th>策略（${H(t.since)} 至今）</th><th>期末</th><th>年化</th><th>最大回撤</th><th></th></tr></thead><tbody>`
+    + row('一直满仓（基准）', t.hold)
+    + row(`估值 >${t.high_pctile} 分位就清仓`, t.exit_on_valuation)
+    + row(`估值 >${t.high_pctile} 分位减半仓`, t.half_on_valuation)
+    + row('跌破 12 个月均线清仓（理想条件）', t.ma12_ideal, '　← 不含税与延迟')
+    + row(`同上 + 延迟1月 + ${t.tax_pct}% 税`, t.ma12_realistic, '　← 接近现实')
+    + '</tbody>';
+
+  const set=(id,html)=>{const el=document.getElementById(id); if(el) el.innerHTML=html;};
+  const beat = (a,b) => (a.final/b.final*100).toFixed(0);
+  set('tm-val', `估值 >${t.high_pctile} 分位就清仓，最终只有一直满仓的 `
+    + `<b>${beat(t.exit_on_valuation, t.hold)}%</b>（${t.exit_on_valuation.final}x vs ${t.hold.final}x），`
+    + `而且最大回撤 <b>一点没改善</b>（${t.exit_on_valuation.mdd_pct}% vs ${t.hold.mdd_pct}%）—— 少赚了钱，风险还没降。`);
+  const lr = t.longest_run, cr = t.current_run;
+  set('tm-runs', `${t.since} 以来估值进入 >${t.high_pctile} 分位共 <b>${t.high_runs}</b> 段，`
+    + (lr ? `最长的一段是 <b>${H(lr.start)} → ${H(lr.end)}，整整 ${lr.months} 个月（${(lr.months/12).toFixed(1)} 年）</b>。` : '')
+    + (cr ? `<b>当前这一段从 ${H(cr.start)} 开始，已经 ${cr.months} 个月了</b>，它完全可以再持续好几年。` : ''));
+  set('tm-ma', `理想条件下 <b>${t.ma12_ideal.final}x</b>、回撤只有 ${t.ma12_ideal.mdd_pct}%，看着碾压满仓；`
+    + `但加上成交延迟和税之后只剩 <b>${t.ma12_realistic.final}x</b>，`
+    + `<b>反而输给什么都不做的 ${t.hold.final}x</b>。`);
+  set('tm-tax', t.tax_pct);
+  set('tm-trades', t.ma12_ideal.trades);
+  set('tm-mdd', `一直满仓的最大回撤 <b>${t.hold.mdd_pct}%</b>`);
+  set('tm-years', Math.round((new Date().getFullYear()) - (+t.since.slice(0,4))));
 }
 
 // ============ 明细表 ============

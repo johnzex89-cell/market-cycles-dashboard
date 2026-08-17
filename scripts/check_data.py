@@ -274,6 +274,22 @@ def main() -> int:
             check(abs(pb["drawdown_pct"] - (latest["price"] / ath - 1) * 100) < 0.05,
                   "playbook.drawdown_pct 与最新价/最高点算出来的不一致")
 
+    # ========== 10. 择时回测：结论方向必须稳定 ==========
+    # 这块是拿来劝人"别逃顶"的，如果哪天算出"择时碾压满仓"，多半是回测写错了
+    #（最典型：忘了算税或成交延迟）。这里钉住基准本身合理 + 两个已知结论。
+    tm = d.get("timing")
+    if tm and tm.get("hold"):
+        hold = tm["hold"]
+        check(1.5 <= hold["cagr_pct"] <= 15,
+              f"一直满仓的年化 {hold['cagr_pct']}% 不在合理区间 [1.5,15]")
+        check(hold["mdd_pct"] < -20, f"一直满仓的最大回撤 {hold['mdd_pct']}% 太浅，疑似算错")
+        if tm.get("exit_on_valuation"):
+            check(tm["exit_on_valuation"]["final"] < hold["final"],
+                  "估值择时反而跑赢满仓 —— 与 60 年历史结论相反，先查回测是否算错")
+        if tm.get("ma12_realistic") and tm.get("ma12_ideal"):
+            check(tm["ma12_realistic"]["final"] < tm["ma12_ideal"]["final"],
+                  "加了税与延迟后趋势择时反而更好 —— 摩擦项多半没生效")
+
     # —— 输出 ——
     print(f"自检目标：{os.path.relpath(target, ROOT)}")
     print(f"  周期 {len(cycles)} 段 | 最新 {latest['month']} 价格 {latest['price']} "
@@ -287,7 +303,7 @@ def main() -> int:
         for f_ in failures:
             print(f"   - {f_}")
         return 1
-    print("\n✅ 自检通过（9 组断言）")
+    print("\n✅ 自检通过（10 组断言）")
     return 0
 
 

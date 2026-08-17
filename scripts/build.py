@@ -257,6 +257,104 @@ def compute_breadth(french: dict) -> tuple[list[list], dict[str, float]]:
     return out, vw_mkt, weights_snapshot.get(months[-1], {})
 
 
+CASH_APY = 0.04              # 空仓期间现金按货币基金收益计息，否则择时策略被高估
+TAX_ON_GAIN = 0.20           # 卖出时对浮盈征资本利得税（长期税率）
+SIGNAL_DELAY_MONTHS = 1      # 信号延迟：你无法在"月均价"那个点成交
+HIGH_VALUATION_PCTILE = 0.90  # "估值高位"的判定线
+
+
+def compute_timing(months: list[str], prices: list[float],
+                   cape: dict[str, float]) -> dict:
+    """择时策略回测 —— 用来回答"要不要逃顶"。
+
+    🔴 两个不能省的现实摩擦，省掉就会得出"趋势择时碾压满仓"的假结论：
+      ① 信号延迟：回测里用月均价当天买卖是做不到的；
+      ② 税：每次卖出对浮盈交税，65 年下来 68 次交易的摩擦足以吃光超额收益。
+    实测 12 个月均线策略：理想条件 391x，加延迟+税后只剩 78.6x，反而输给一直满仓的 131.5x。
+
+    估值分位用**滚动历史**计算（只用当时能知道的数据），避免未来函数。
+    """
+    common = [m for m in months if m in cape]
+    idx = {m: i for i, m in enumerate(months)}
+    P = [prices[idx[m]] for m in common]
+    if len(P) < 240:
+        return {}
+
+    # 滚动分位：每个时点只用"截至当时"的历史
+    hist: list[float] = []
+    pctile: list[float] = []
+    for m in common:
+        hist.append(cape[m])
+        s = sorted(hist)
+        pctile.append(s.index(cape[m]) / max(1, len(s) - 1))
+
+    rm = (1 + CASH_APY) ** (1 / 12) - 1
+
+    def moving_avg(i: int, n: int) -> float:
+        seg = P[max(0, i - n + 1): i + 1]
+        return sum(seg) / len(seg)
+
+    def simulate(rule, tax: float = 0.0, delay: int = 0) -> tuple[float, float, int]:
+        val, pos, basis, peak, mdd, trades = 1.0, 1.0, 1.0, 0.0, 0.0, 0
+        signals = [rule(i) for i in range(len(P))]
+        for i in range(1, len(P)):
+            r = P[i] / P[i - 1] - 1
+            val *= (1 + pos * r + (1 - pos) * rm)
+            peak = max(peak, val)
+            mdd = min(mdd, val / peak - 1)
+            want = signals[max(0, i - delay)]
+            if want != pos:
+                trades += 1
+                if want == 0.0 and tax > 0:
+                    val -= max(0.0, val - basis) * tax
+                    basis = val
+                if want == 1.0:
+                    basis = val
+                pos = want
+        return val, mdd * 100, trades
+
+    years = len(P) / 12
+    def pack(v, mdd, tr):
+        return {"final": round(v, 1), "cagr_pct": round((v ** (1 / years) - 1) * 100, 1),
+                "mdd_pct": round(mdd, 1), "trades": tr}
+
+    hold = simulate(lambda i: 1.0)
+    val_exit = simulate(lambda i: 0.0 if pctile[i] > HIGH_VALUATION_PCTILE else 1.0)
+    val_half = simulate(lambda i: 0.5 if pctile[i] > HIGH_VALUATION_PCTILE else 1.0)
+    ma_ideal = simulate(lambda i: 1.0 if P[i] >= moving_avg(i, 12) else 0.0)
+    ma_real = simulate(lambda i: 1.0 if P[i] >= moving_avg(i, 12) else 0.0,
+                       tax=TAX_ON_GAIN, delay=SIGNAL_DELAY_MONTHS)
+
+    # 估值待在高位能待多久 —— 逃顶最反直觉的一点
+    runs, start = [], None
+    for i, p in enumerate(pctile):
+        if p > HIGH_VALUATION_PCTILE and start is None:
+            start = i
+        elif p <= HIGH_VALUATION_PCTILE and start is not None:
+            runs.append({"start": common[start], "end": common[i - 1], "months": i - start})
+            start = None
+    if start is not None:
+        runs.append({"start": common[start], "end": common[-1],
+                     "months": len(common) - start, "ongoing": True})
+    longest = max(runs, key=lambda r: r["months"]) if runs else None
+    current = runs[-1] if runs and runs[-1].get("ongoing") else None
+
+    return {
+        "since": common[0],
+        "hold": pack(*hold),
+        "exit_on_valuation": pack(*val_exit),
+        "half_on_valuation": pack(*val_half),
+        "ma12_ideal": pack(*ma_ideal),
+        "ma12_realistic": pack(*ma_real),
+        "tax_pct": int(TAX_ON_GAIN * 100),
+        "high_pctile": int(HIGH_VALUATION_PCTILE * 100),
+        "high_runs": len(runs),
+        "longest_run": longest,
+        "current_run": current,
+        "current_pctile": round(pctile[-1] * 100),
+    }
+
+
 def main() -> int:
     price_snap = load("sp500_price")
     earn_snap = load("sp500_earnings")
@@ -430,8 +528,13 @@ def main() -> int:
     cross = [[m, own10[m], official10[m]]
              for m in sorted(set(own10) & set(official10))[-24:]]
 
+    timing = compute_timing([m for m in months if m >= CHART_START],
+                            [price[m] for m in months if m >= CHART_START],
+                            dict(cape5))
+
     out = {
         "meta": meta,
+        "timing": timing,
         "playbook": {
             "ath": round(ath, 1), "ath_month": ath_month,
             "drawdown_pct": round(drawdown, 2),
