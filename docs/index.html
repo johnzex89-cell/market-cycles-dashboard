@@ -25,7 +25,9 @@
   .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
   .card .k{ font-size:12px; color:var(--muted); margin-bottom:4px; }
   .card .v{ font-size:21px; font-weight:600; letter-spacing:-.3px; }
-  .card .n{ font-size:11px; color:var(--muted); margin-top:3px; }
+  .card .n{ font-size:11px; color:var(--muted); margin-top:4px; line-height:1.5; }
+  .card{ cursor:help; }
+  .m2{ color:var(--muted); }
   .up{ color:var(--bull); } .down{ color:var(--bear); }
   .chartbox{ border:1px solid var(--line); border-radius:12px; overflow-x:auto; overflow-y:hidden;
              background:var(--card); -webkit-overflow-scrolling:touch; position:relative; }
@@ -86,11 +88,11 @@
   <div class="note">
     <b>中层｜估值色带（图的背景色）</b>：红=估值贵、蓝=估值便宜，按原图口径用 <b id="p-cape">5</b> 年 CAPE
     （实际价格 ÷ 过去 60 个月实际盈利均值），不是常见的 10 年版。<br>
-    <b>为什么最新几个月是斜纹</b>：标普盈利要等财报季才定稿，目前定稿到 <b id="p-earn">—</b>。
-    这几个月的估值仍是真算的（分子用当月股价），但<b>分母沿用截至定稿月的盈利均值</b>
-    —— 这也是 Shiller 和 multpl 的标准做法。<br>
-    口径已交叉验证：用同一套算法算 10 年 CAPE，与 multpl 官方值偏差 <b id="p-dev">—</b>，
-    每天自动比对，超过 3% 就中止更新。
+    <b>右端那段斜纹是什么意思</b>：<span id="p-lag">—</span><br>
+    <b>什么时候会用上更新的盈利</b>：<span id="p-next">—</span>
+    看板每天自动抓，新盈利一到就自己补上，斜纹会随之变短，<b>你不用做任何操作</b>。<br>
+    <span class="m2">口径已交叉验证：用同一套算法算 10 年 CAPE，与 multpl 官方值偏差 <b id="p-dev">—</b>，
+    每天自动比对，超过 3% 就中止更新、不推上线。</span>
   </div>
   <div class="note">
     <b>下层｜市场宽度（代理指标）</b>：<b>低 = 少数大票在带涨（窄），高 = 普涨（宽）</b>。<br>
@@ -130,18 +132,76 @@ function render(d){
     devEl.textContent = '<' + (Math.ceil(worst*1000)/10).toFixed(1) + '%';
   }
 
+  // 斜纹区间的说明：盈利定稿比股价慢几个月，说清楚滞后多久、下次大概什么时候补上
+  const eLatest = m.sources.earnings.latest, pLatest = m.sources.price.latest;
+  const lagMonths = (+pLatest.slice(0,4)*12 + +pLatest.slice(5)) - (+eLatest.slice(0,4)*12 + +eLatest.slice(5));
+  const lagEl = document.getElementById('p-lag');
+  if(lagEl){
+    lagEl.innerHTML = `标普盈利要等财报季才定稿，目前只定稿到 <b>${eLatest}</b>，比股价（${pLatest}）`
+      + `晚 <b>${lagMonths} 个月</b>。<b>图本身是画到 ${pLatest} 的</b>，斜纹只标出"这几个月的估值分母还是旧盈利"：`
+      + `分子用的是当月股价（最新），分母沿用截至 ${eLatest} 的盈利均值 —— 这也是 Shiller 和 multpl 的标准做法，`
+      + `因为缺的这几个月只占 60 个月均值的很小一部分。`;
+  }
+  // 下一次补数时间：按当前滞后推算下一个季度末盈利的到位时间（推算，不是官方时间表）
+  const nextEl = document.getElementById('p-next');
+  if(nextEl){
+    const eY = +eLatest.slice(0,4), eM = +eLatest.slice(5);
+    const nq = eM + 3;                                  // 下一个季度末
+    const nqY = eY + Math.floor((nq-1)/12), nqM = ((nq-1)%12)+1;
+    const arrive = nqM + lagMonths;                     // 按当前滞后推算到位时间
+    const aY = nqY + Math.floor((arrive-1)/12), aM = ((arrive-1)%12)+1;
+    nextEl.innerHTML = `下一批是 ${nqY}-${String(nqM).padStart(2,'0')} 那个季度的盈利，`
+      + `按目前 ${lagMonths} 个月的滞后<b>推算</b>大约 <b>${aY} 年 ${aM} 月</b>前后到位（推算值，非官方时间表）。`;
+  }
+
   // —— 顶部状态卡 ——
   const kindTxt = L.cycle_kind === 'bull' ? '牛市' : '熊市';
   const cls = L.cycle_pct >= 0 ? 'up' : 'down';
   const yrs = (L.cycle_months/12);
+  // 每张卡都配一句人话 + 历史对照 —— 光一个数字看不出好坏
+  const X = m.context || {};
+  const medYrs = X.bull_median_months ? (X.bull_median_months/12).toFixed(1) : null;
+  const isBull = L.cycle_kind === 'bull';
+  const medPct = isBull ? X.bull_median_pct : X.bear_median_pct;
+  const medMon = isBull ? X.bull_median_months : X.bear_median_months;
+  const sample = isBull ? X.sample_bulls : X.sample_bears;
+  const capeTop = X.cape_rank_n === 1
+      ? `<b>${X.cape_since?.slice(0,4)} 年以来最贵</b>`
+      : `${X.cape_since?.slice(0,4)} 年以来第 ${X.cape_rank_n} 贵`;
+  const brRank = X.breadth_rank_n <= 3 ? `<b>第 ${X.breadth_rank_n} 窄</b>` : `第 ${X.breadth_rank_n} 窄`;
+
   document.getElementById('cards').innerHTML = [
     ['当前处于', `<span class="${cls}">${kindTxt}</span>`,
-     `自 ${L.cycle_start}，已 ${yrs>=1 ? yrs.toFixed(1)+' 年' : L.cycle_months+' 个月'}`],
-    ['本轮幅度', `<span class="${cls}">${F(L.cycle_pct)}</span>`, '从上一个转折点算起'],
-    ['标普 500', L.price.toLocaleString('en-US',{maximumFractionDigits:0}), `${L.month} · 月内均价`],
-    ['估值 (5年 CAPE)', L.cape5 ?? '—', `${L.cape5_month} · 10年版参考 ${L.cape10_reference}`],
-    ['市场宽度', L.breadth==null ? '—' : F(L.breadth), '等权−市值加权，12个月'],
-  ].map(([k,v,n])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`).join('');
+     `自 ${L.cycle_start}，已 ${yrs>=1 ? yrs.toFixed(1)+' 年' : L.cycle_months+' 个月'}`
+     + (medMon ? `<br>历史${kindTxt}中位 ${(medMon/12).toFixed(1)} 年` : ''),
+     `从 ${L.cycle_start} 那个转折点算起，${kindTxt}已经走了 ${L.cycle_months} 个月。`
+     + `历史上（${X.cycles_since?.slice(0,4)} 年以来）${sample} 段${kindTxt}的中位时长是 ${medMon} 个月。`],
+
+    ['本轮幅度', `<span class="${cls}">${F(L.cycle_pct)}</span>`,
+     `${L.cycle_start} 低点至今的涨幅<br>历史${kindTxt}中位 ${medPct>0?'+':''}${medPct}%`,
+     `从 ${L.cycle_start} 的转折点到现在，标普 500 一共${isBull?'涨':'跌'}了 ${Math.abs(L.cycle_pct)}%。`
+     + `历史上 ${sample} 段${kindTxt}的中位幅度是 ${medPct}%，所以这一轮目前属于`
+     + `${X.cycle_pct_rank>=67?'偏大':X.cycle_pct_rank<=33?'偏小':'中等'}水平。`],
+
+    ['标普 500', L.price.toLocaleString('en-US',{maximumFractionDigits:0}),
+     `${L.month} · 月内均价`,
+     `${L.month} 当月的平均收盘点位。用月均价而非月末收盘，是数据源决定的（见下方说明）。`],
+
+    ['估值 (5年 CAPE)', L.cape5 ?? '—',
+     `${capeTop}<br>` + (X.cape_prev_record ? `前纪录 ${X.cape_prev_record[0]} 的 ${X.cape_prev_record[1]}` : ''),
+     `股价 ÷ 过去 5 年的平均盈利（都按通胀调整过）。数字越大越贵。`
+     + `当前 ${L.cape5} 在 ${X.cape_since} 以来的 ${X.cape_total} 个月里排第 ${X.cape_rank_n}。`
+     + `常见的 10 年版本目前是 ${L.cape10_reference}。`],
+
+    ['市场宽度', L.breadth==null ? '—' : F(L.breadth),
+     `普通股落后大盘股 ${Math.abs(L.breadth).toFixed(1)} 个百分点<br>`
+     + `${X.breadth_since?.slice(0,4)} 年以来${brRank}`,
+     `过去 12 个月，"每只股票同等权重"的组合比"大公司占大头"的组合落后了 `
+     + `${Math.abs(L.breadth).toFixed(1)} 个百分点。落后越多，说明这波涨得越集中在少数巨头身上。`
+     + `${X.breadth_since} 以来第 ${X.breadth_rank_n} 窄；最窄的一次是 ${X.breadth_record?.[0]}（${X.breadth_record?.[1]}），`
+     + `正是科网泡沫顶部。`],
+  ].map(([k,v,n,tip])=>`<div class="card" title="${(tip||'').replace(/"/g,'&quot;')}">`
+      + `<div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`).join('');
 
   drawChart(d);
   drawTable(d);

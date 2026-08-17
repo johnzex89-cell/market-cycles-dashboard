@@ -234,6 +234,59 @@ def main() -> int:
     breadth = compute_breadth(french_snap)
 
     latest_cycle = paths[-1]
+
+    # —— 历史对照：光给一个数字看不出好坏，得说清它在历史上算什么水平 ——
+    def median(xs: list[float]) -> float:
+        s = sorted(xs)
+        n = len(s)
+        return s[n // 2] if n % 2 else (s[n // 2 - 1] + s[n // 2]) / 2
+
+    def rank_pct(value: float, pool: list[float]) -> int:
+        """value 在 pool 中的百分位（0-100），用于"比历史上百分之多少的时候更…"。"""
+        if not pool:
+            return 0
+        return round(sum(1 for v in pool if v <= value) / len(pool) * 100)
+
+    done_bulls = [c for c in paths if c["kind"] == "bull" and c["confirmed"]]
+    done_bears = [c for c in paths if c["kind"] == "bear" and c["confirmed"]]
+    cape_vals = [v for _, v in cape5]
+    breadth_vals = [v for _, v in breadth]
+
+    def rank_of(value: float, pool: list[float], biggest_first: bool) -> int:
+        """名次（第几）。比百分位直观：宽度当前是"第 3 窄"，而百分位会四舍五入成 0%。"""
+        s = sorted(pool, reverse=biggest_first)
+        return s.index(value) + 1
+
+    # 极值旁证：把"此前的纪录"一并带上，读者能自己判断这个第一名含金量
+    cape_sorted = sorted(cape5, key=lambda r: -r[1])
+    breadth_sorted = sorted(breadth, key=lambda r: r[1])
+
+    context = {
+        "cape_rank_n": rank_of(cape5[-1][1], cape_vals, True) if cape5 else None,
+        "cape_total": len(cape_vals),
+        "cape_since": cape5[0][0] if cape5 else None,
+        "cape_prev_record": cape_sorted[1] if len(cape_sorted) > 1 else None,
+        "breadth_rank_n": rank_of(breadth[-1][1], breadth_vals, False) if breadth else None,
+        "breadth_total": len(breadth_vals),
+        "breadth_since": breadth[0][0] if breadth else None,
+        "breadth_record": breadth_sorted[0] if breadth_sorted else None,
+        "cycles_since": paths[0]["start"] if paths else None,
+        "bull_median_pct": round(median([c["pct"] for c in done_bulls]), 1) if done_bulls else None,
+        "bull_median_months": round(median([c["months"] for c in done_bulls])) if done_bulls else None,
+        "bear_median_pct": round(median([c["pct"] for c in done_bears]), 1) if done_bears else None,
+        "bear_median_months": round(median([c["months"] for c in done_bears])) if done_bears else None,
+        "cycle_pct_rank": rank_pct(latest_cycle["pct"],
+                                   [c["pct"] for c in (done_bulls if latest_cycle["kind"] == "bull"
+                                                       else done_bears)]),
+        "cycle_months_rank": rank_pct(latest_cycle["months"],
+                                      [c["months"] for c in (done_bulls if latest_cycle["kind"] == "bull"
+                                                             else done_bears)]),
+        "cape_rank": rank_pct(cape5[-1][1], cape_vals) if cape5 else None,
+        "breadth_rank": rank_pct(breadth[-1][1], breadth_vals) if breadth else None,
+        "sample_bulls": len(done_bulls),
+        "sample_bears": len(done_bears),
+    }
+
     meta = {
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(timespec="seconds"),
         "version": VERSION,
@@ -266,6 +319,7 @@ def main() -> int:
             "cape10_reference": cape10_snap["rows"][-1][1],
             "breadth": breadth[-1][1] if breadth else None,
         },
+        "context": context,
     }
 
     # 口径交叉验证：自算 CAPE10 vs multpl 官方 CAPE10，最近两年逐月比对。
