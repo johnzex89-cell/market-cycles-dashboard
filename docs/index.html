@@ -67,7 +67,8 @@
   <div class="note">
     <b>中层｜估值色带（图的背景色）</b>：红=估值贵、蓝=估值便宜，按原图口径用 <b id="p-cape">5</b> 年 CAPE
     （实际价格 ÷ 过去 60 个月实际盈利均值），不是常见的 10 年版。<br>
-    盈利数据比股价滞后一两个月，最新几个月<b>留白不外推</b>。
+    盈利数据比股价滞后几个月，所以最新几个月<b>没有实测估值</b>：图上用<b>斜纹</b>标出，
+    颜色沿用最后一个已知月份，<b>不是新算出来的</b>，别当成"最新估值"读。
   </div>
   <div class="note">
     <b>下层｜市场宽度（代理指标）</b>：<b>低 = 少数大票在带涨（窄），高 = 普涨（宽）</b>。<br>
@@ -180,22 +181,35 @@ function drawChart(d){
   };
   const colw = (W-L-R)/(months.length-1);
   const bandTop = T, bandH = TOP_H+GAP+BOT_H;
-  // 盈利数据比股价滞后，尾部若干月没有 CAPE。这些月份不外推估值，
-  // 但也不能留空白（会看起来像图画到了背景外面），改画中性底色并在下面标注截止点。
+  // 盈利数据比股价滞后，尾部若干月没有 CAPE。这里让色带**沿用最后一个已知值**延续到最右端，
+  // 使背景与图表同宽（否则最新一段会看起来画到了背景外面），
+  // 再叠一层斜纹明示"这段是沿用的、不是实测估值"。
   const lastCape = d.cape5.length ? d.cape5[d.cape5.length-1][0] : null;
+  const lastCapeVal = d.cape5.length ? d.cape5[d.cape5.length-1][1] : null;
+  el.push(`<defs><pattern id="nodata" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`
+        + `<line x1="0" y1="0" x2="0" y2="7" stroke="#ffffff" stroke-width="3" opacity="0.55"/></pattern></defs>`);
+
+  const capeColor = v => {
+    const p = pct(v);                        // 0=最便宜 1=最贵
+    const r = Math.round(70 + 175*p), g = Math.round(110 - 40*Math.abs(p-0.5)*2), b = Math.round(245 - 185*p);
+    return { fill:`rgb(${r},${g},${b})`, alpha: 0.10 + 0.26*Math.abs(p-0.5)*2 };
+  };
+
   months.forEach((m,i)=>{
-    if(lastCape && m > lastCape){
-      el.push(`<rect x="${(x(i)-colw/2).toFixed(1)}" y="${bandTop}" width="${(colw+0.6).toFixed(1)}" height="${bandH}" fill="${C.muted}" opacity="0.07"/>`);
-    }
+    const c = capeMap.get(m);
+    if(c!=null) return;
+    if(lastCapeVal==null || !lastCape || m <= lastCape) return;
+    const col = capeColor(lastCapeVal);
+    const xx = (x(i)-colw/2).toFixed(1), ww = (colw+0.6).toFixed(1);
+    el.push(`<rect x="${xx}" y="${bandTop}" width="${ww}" height="${bandH}" fill="${col.fill}" opacity="${col.alpha.toFixed(3)}"/>`);
+    el.push(`<rect x="${xx}" y="${bandTop}" width="${ww}" height="${bandH}" fill="url(#nodata)"/>`);
   });
+
   months.forEach((m,i)=>{
     const c = capeMap.get(m);
     if(c==null) return;
-    const p = pct(c);                        // 0=最便宜 1=最贵
-    // 蓝(便宜) → 灰(中性) → 红(贵)
-    const r = Math.round(70 + 175*p), g = Math.round(110 - 40*Math.abs(p-0.5)*2), b = Math.round(245 - 185*p);
-    const alpha = 0.10 + 0.26*Math.abs(p-0.5)*2;
-    el.push(`<rect x="${(x(i)-colw/2).toFixed(1)}" y="${T}" width="${(colw+0.6).toFixed(1)}" height="${TOP_H+GAP+BOT_H}" fill="rgb(${r},${g},${b})" opacity="${alpha.toFixed(3)}"/>`);
+    const col = capeColor(c);   // 蓝(便宜) → 灰(中性) → 红(贵)，公式只此一份
+    el.push(`<rect x="${(x(i)-colw/2).toFixed(1)}" y="${bandTop}" width="${(colw+0.6).toFixed(1)}" height="${bandH}" fill="${col.fill}" opacity="${col.alpha.toFixed(3)}"/>`);
   });
 
   // —— 上层：网格与 0 线 ——
