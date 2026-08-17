@@ -1,0 +1,36 @@
+name: 每日更新
+
+on:
+  schedule:
+    - cron: '0 12 * * *'   # 每天 UTC 12:00 = 北京时间 20:00（美股前一日已收盘、multpl 已刷新）
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: 抓取数据源
+        run: python3 scripts/fetch_data.py
+
+      - name: 计算三层并生成 data.json
+        run: python3 scripts/build.py
+
+      - name: 数据合理性自检（不过就中止，不推坏数据上线）
+        run: python3 scripts/check_data.py
+
+      - name: 提交更新
+        run: |
+          git config --local user.email "action@github.com"
+          git config --local user.name "GitHub Action"
+          git add data/ docs/data.json
+          git diff --staged --quiet || git commit -m "chore: 更新市场周期数据 $(date -u +%Y-%m-%d)"
+          git push

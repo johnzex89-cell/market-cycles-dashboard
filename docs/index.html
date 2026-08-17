@@ -1,0 +1,267 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>市场周期看板</title>
+<style>
+  :root{
+    --bg:#ffffff; --fg:#1a1d21; --muted:#6b7280; --line:#e5e7eb; --card:#f9fafb;
+    --bull:#2f9e5f; --bear:#d94a4a; --accent:#2563eb;
+  }
+  @media (prefers-color-scheme: dark){
+    :root{ --bg:#14171a; --fg:#e8eaed; --muted:#9aa3ad; --line:#2a2f36; --card:#1b1f24; }
+  }
+  *{ box-sizing:border-box; }
+  body{
+    margin:0; background:var(--bg); color:var(--fg);
+    font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;
+  }
+  .wrap{ max-width:1180px; margin:0 auto; padding:28px 18px 60px; }
+  h1{ font-size:23px; margin:0 0 6px; letter-spacing:-.2px; }
+  .sub{ color:var(--muted); font-size:13px; margin-bottom:22px; }
+  .cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:22px; }
+  .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
+  .card .k{ font-size:12px; color:var(--muted); margin-bottom:4px; }
+  .card .v{ font-size:21px; font-weight:600; letter-spacing:-.3px; }
+  .card .n{ font-size:11px; color:var(--muted); margin-top:3px; }
+  .up{ color:var(--bull); } .down{ color:var(--bear); }
+  .chartbox{ border:1px solid var(--line); border-radius:12px; overflow-x:auto; overflow-y:hidden;
+             background:var(--card); -webkit-overflow-scrolling:touch; }
+  .chartbox svg{ display:block; min-width:1080px; }
+  .hint{ font-size:12px; color:var(--muted); margin:8px 2px 26px; }
+  h2{ font-size:16px; margin:30px 0 10px; }
+  .note{ background:var(--card); border:1px solid var(--line); border-left:3px solid var(--accent);
+         border-radius:8px; padding:13px 15px; margin-bottom:12px; }
+  .note b{ font-weight:600; }
+  .note .warn{ color:var(--bear); font-weight:600; }
+  table{ border-collapse:collapse; width:100%; font-size:13px; }
+  th,td{ text-align:left; padding:7px 9px; border-bottom:1px solid var(--line); }
+  th{ color:var(--muted); font-weight:500; }
+  code{ background:var(--card); padding:1px 5px; border-radius:4px; font-size:12px; }
+  footer{ margin-top:34px; padding-top:16px; border-top:1px solid var(--line);
+          font-size:12px; color:var(--muted); }
+  a{ color:var(--accent); }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>市场周期看板</h1>
+  <div class="sub">
+    标普 500 的牛熊周期 · 估值冷热 · 市场宽度 ——
+    参考 Fidelity「Market Cycles」的结构，全部改用公开数据自建口径（<a href="#method">口径说明</a>）
+  </div>
+
+  <div class="cards" id="cards"></div>
+
+  <div class="chartbox"><svg id="chart" viewBox="0 0 1600 940" preserveAspectRatio="xMinYMin meet"></svg></div>
+  <div class="hint">图较宽，手机上可左右滑动查看 · 鼠标悬停各段可看起止时间</div>
+
+  <h2 id="method">三层分别是什么，跟原图差在哪</h2>
+  <div class="note">
+    <b>上层｜牛熊周期</b>：每一段从 0 开始长出，绿色是牛市累计涨幅、红色是熊市累计跌幅，顶端数字是该段总幅度。<br>
+    <span class="warn">与原图的差异：</span>原图那 18 段是 Fidelity 人工策展的（它的熊市里有 -15%、-14%、-10%，
+    没有统一阈值），无法用公开算法还原。这里改用<b>可复算的规则</b>：月度价格反转
+    <b id="p-rev">10%</b> 即确认转势，段幅度按峰到谷全程计。
+  </div>
+  <div class="note">
+    <b>中层｜估值色带（图的背景色）</b>：红=估值贵、蓝=估值便宜，按原图口径用 <b id="p-cape">5</b> 年 CAPE
+    （实际价格 ÷ 过去 60 个月实际盈利均值），不是常见的 10 年版。<br>
+    盈利数据比股价滞后一两个月，最新几个月<b>留白不外推</b>。
+  </div>
+  <div class="note">
+    <b>下层｜市场宽度（代理指标）</b>：<b>低 = 少数大票在带涨（窄），高 = 普涨（宽）</b>。<br>
+    <span class="warn">这一层不是原图那个指标。</span>原图是「标普 500 成分股中过去 12 个月跑赢指数的<b>比例</b>」，
+    算它需要历史时点的成分股名单 + 含已退市公司的股价，免费拿不到（雷曼、安然这些查询全部 404，
+    1961 年以来离开标普 500 的公司约 700 家）。这里用 Kenneth French 的
+    <b>全市场等权 − 市值加权，12 个月滚动收益差</b>代替，单位是百分点，
+    <b>所以用了独立纵轴，不能当成"百分之多少的股票跑赢"来读</b>。
+    它是全市场口径（含小盘股），个别年份可能与原指标方向相反。
+  </div>
+
+  <h2>周期明细</h2>
+  <table id="table"></table>
+
+  <footer id="footer"></footer>
+</div>
+
+<script>
+const F = (n, d=1) => (n>=0?'+':'') + n.toFixed(d) + '%';
+
+fetch('data.json?t=' + Date.now()).then(r=>r.json()).then(render).catch(e=>{
+  document.getElementById('cards').innerHTML =
+    '<div class="card"><div class="k">加载失败</div><div class="v">—</div><div class="n">'+e+'</div></div>';
+});
+
+function render(d){
+  const m = d.meta, L = m.latest, P = m.params;
+  document.getElementById('p-rev').textContent = P.reversal_pct + '%';
+  document.getElementById('p-cape').textContent = P.cape_years;
+
+  // —— 顶部状态卡 ——
+  const kindTxt = L.cycle_kind === 'bull' ? '牛市' : '熊市';
+  const cls = L.cycle_pct >= 0 ? 'up' : 'down';
+  const yrs = (L.cycle_months/12);
+  document.getElementById('cards').innerHTML = [
+    ['当前处于', `<span class="${cls}">${kindTxt}</span>`,
+     `自 ${L.cycle_start}，已 ${yrs>=1 ? yrs.toFixed(1)+' 年' : L.cycle_months+' 个月'}`],
+    ['本轮幅度', `<span class="${cls}">${F(L.cycle_pct)}</span>`, '从上一个转折点算起'],
+    ['标普 500', L.price.toLocaleString('en-US',{maximumFractionDigits:0}), `${L.month} · 月内均价`],
+    ['估值 (5年 CAPE)', L.cape5 ?? '—', `${L.cape5_month} · 10年版参考 ${L.cape10_reference}`],
+    ['市场宽度', L.breadth==null ? '—' : F(L.breadth), '等权−市值加权，12个月'],
+  ].map(([k,v,n])=>`<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`).join('');
+
+  drawChart(d);
+  drawTable(d);
+
+  document.getElementById('footer').innerHTML =
+    `数据更新：${m.generated_at.replace('T',' ').replace('+00:00',' UTC')}　·　`
+    + `价格与盈利 <a href="${m.sources.price.url}" target="_blank">multpl</a>（价格至 ${m.sources.price.latest}、`
+    + `盈利至 ${m.sources.earnings.latest}）　·　`
+    + `宽度 <a href="${m.sources.breadth.url}" target="_blank">Kenneth French Data Library</a>`
+    + `（至 ${m.sources.breadth.latest}，CRSP ${m.sources.breadth.crsp_version}）<br>`
+    + `本页为个人研究用途，非投资建议。指标口径均为自建，与 Fidelity 原图不等价。`;
+}
+
+// SVG 的 presentation attribute 不解析 CSS var()（会渲染成黑色/不可见），
+// 所以这里把主题色读成字面值再拼进 SVG。
+const CSS = (name, fallback) => {
+  const v = getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  return v || fallback;
+};
+const C = {
+  bull: CSS('--bull', '#2f9e5f'),
+  bear: CSS('--bear', '#d94a4a'),
+  line: CSS('--line', '#e5e7eb'),
+  muted: CSS('--muted', '#6b7280'),
+  accent: CSS('--accent', '#2563eb'),
+};
+
+// ============ 主图 ============
+function drawChart(d){
+  const W=1600, L=64, R=26, T=26;
+  const TOP_H=470;                 // 上层：周期
+  const GAP=96;                    // 中间留白：要同时放年份轴和下层标题，窄了会叠字
+  const BOT_H=200;                 // 下层：宽度
+  const topBase = T + TOP_H*0.72;  // 上层 0 线（下方留给熊市）
+  const botTop  = T + TOP_H + GAP;
+  const botBase = botTop + BOT_H/2;
+
+  const months = d.price.map(r=>r[0]);
+  const mIdx = new Map(months.map((m,i)=>[m,i]));
+  const x = i => L + (W-L-R) * (i/(months.length-1));
+  const xm = m => x(mIdx.get(m) ?? 0);
+
+  // 上层纵轴：覆盖所有段的幅度
+  let maxUp=0, maxDn=0;
+  d.cycles.forEach(c=>c.points.forEach(p=>{ if(p[1]>maxUp)maxUp=p[1]; if(p[1]<maxDn)maxDn=p[1]; }));
+  const upSpan = Math.max(maxUp, 60), dnSpan = Math.min(maxDn, -30);
+  const yTop = v => v>=0
+      ? topBase - (v/upSpan) * (topBase - T)
+      : topBase + (v/dnSpan) * ((T+TOP_H) - topBase);
+
+  // 下层纵轴：用 96 分位而不是最大值定标，否则少数极端月份会把整条线压成一条直线。
+  // 超出量程的点截断到边界（视觉上顶到框，不失真为"没发生"）。
+  const bAbs = d.breadth.map(r=>Math.abs(r[1])).sort((a,b)=>a-b);
+  const bMax = Math.max(bAbs[Math.floor(bAbs.length*0.96)] || 10, 10);
+  const clamp = v => Math.max(-bMax, Math.min(bMax, v));
+  const yBot = v => botBase - (clamp(v)/bMax) * (BOT_H/2 - 8);
+
+  const el = [];
+  const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
+
+  // —— 背景：CAPE5 色带 ——
+  const capeMap = new Map(d.cape5);
+  const vals = d.cape5.map(r=>r[1]).slice().sort((a,b)=>a-b);
+  const pct = v => { // 分位数 0..1
+    let lo=0, hi=vals.length-1;
+    while(lo<hi){ const mid=(lo+hi)>>1; if(vals[mid]<v) lo=mid+1; else hi=mid; }
+    return lo/(vals.length-1);
+  };
+  const colw = (W-L-R)/(months.length-1);
+  months.forEach((m,i)=>{
+    const c = capeMap.get(m);
+    if(c==null) return;
+    const p = pct(c);                        // 0=最便宜 1=最贵
+    // 蓝(便宜) → 灰(中性) → 红(贵)
+    const r = Math.round(70 + 175*p), g = Math.round(110 - 40*Math.abs(p-0.5)*2), b = Math.round(245 - 185*p);
+    const alpha = 0.10 + 0.26*Math.abs(p-0.5)*2;
+    el.push(`<rect x="${(x(i)-colw/2).toFixed(1)}" y="${T}" width="${(colw+0.6).toFixed(1)}" height="${TOP_H+GAP+BOT_H}" fill="rgb(${r},${g},${b})" opacity="${alpha.toFixed(3)}"/>`);
+  });
+
+  // —— 上层：网格与 0 线 ——
+  for(const v of [150,100,50,0,-25,-50]){
+    if(v>upSpan || v<dnSpan) continue;
+    const y=yTop(v);
+    el.push(`<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="${C.line}" stroke-width="${v===0?1.4:1}" ${v===0?'':'stroke-dasharray="3 4"'}/>`);
+    el.push(`<text x="${L-8}" y="${(y+4).toFixed(1)}" text-anchor="end" font-size="11" fill="${C.muted}">${v>0?'+':''}${v}%</text>`);
+  }
+
+  // —— 上层：每段周期 ——
+  d.cycles.forEach(c=>{
+    const isBull = c.kind==='bull';
+    const color = isBull ? C.bull : C.bear;
+    const pts = c.points.filter(p=>mIdx.has(p[0]));
+    if(pts.length<2) return;
+    const dpath = pts.map((p,i)=>`${i?'L':'M'}${xm(p[0]).toFixed(1)},${yTop(p[1]).toFixed(1)}`).join('')
+                + `L${xm(pts[pts.length-1][0]).toFixed(1)},${topBase.toFixed(1)}`
+                + `L${xm(pts[0][0]).toFixed(1)},${topBase.toFixed(1)}Z`;
+    const title = `${isBull?'牛市':'熊市'} ${c.start} → ${c.end}　${F(c.pct)}　${c.months} 个月`
+                + (c.confirmed ? '' : '（进行中）');
+    el.push(`<path d="${dpath}" fill="${color}" opacity="${c.confirmed?0.82:0.5}"><title>${esc(title)}</title></path>`);
+
+    // 幅度标注：只标较大的段，避免挤成一团
+    if(Math.abs(c.pct) >= 22){
+      const ext = pts.reduce((a,p)=> (isBull ? p[1]>a[1] : p[1]<a[1]) ? p : a, pts[0]);
+      const ty = isBull ? yTop(ext[1])-6 : yTop(ext[1])+13;
+      el.push(`<text x="${xm(ext[0]).toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" font-size="10.5" font-weight="600" fill="${color}">${c.pct.toFixed(0)}%</text>`);
+    }
+  });
+
+  // —— 年份轴 ——
+  el.push(`<line x1="${L}" y1="${T+TOP_H+16}" x2="${W-R}" y2="${T+TOP_H+16}" stroke="${C.line}"/>`);
+  months.forEach((m,i)=>{
+    if(!m.endsWith('-01') || (+m.slice(0,4))%5) return;
+    el.push(`<line x1="${x(i).toFixed(1)}" y1="${T+TOP_H+16}" x2="${x(i).toFixed(1)}" y2="${T+TOP_H+21}" stroke="${C.muted}"/>`);
+    el.push(`<text x="${x(i).toFixed(1)}" y="${T+TOP_H+35}" text-anchor="middle" font-size="11" fill="${C.muted}">${m.slice(0,4)}</text>`);
+  });
+
+  // —— 下层：宽度 ——
+  el.push(`<text x="${L}" y="${botTop-14}" font-size="11.5" fill="${C.muted}">市场宽度代理（等权 − 市值加权，12 个月滚动收益差，百分点）——— 越低＝越靠少数大票带涨</text>`);
+  el.push(`<line x1="${L}" y1="${botBase}" x2="${W-R}" y2="${botBase}" stroke="${C.line}" stroke-width="1.4"/>`);
+  const gridStep = Math.max(5, Math.round(bMax/2/5)*5);
+  for(const v of [gridStep, -gridStep]){
+    if(Math.abs(v)>bMax) continue;
+    el.push(`<line x1="${L}" y1="${yBot(v).toFixed(1)}" x2="${W-R}" y2="${yBot(v).toFixed(1)}" stroke="${C.line}" stroke-dasharray="3 4"/>`);
+    el.push(`<text x="${L-8}" y="${(yBot(v)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="${C.muted}">${v>0?'+':''}${v}</text>`);
+  }
+  const bpts = d.breadth.filter(r=>mIdx.has(r[0]));
+  if(bpts.length){
+    const line = bpts.map((r,i)=>`${i?'L':'M'}${xm(r[0]).toFixed(1)},${yBot(r[1]).toFixed(1)}`).join('');
+    el.push(`<path d="${line}L${xm(bpts[bpts.length-1][0]).toFixed(1)},${botBase}L${xm(bpts[0][0]).toFixed(1)},${botBase}Z" fill="${C.accent}" opacity="0.13"/>`);
+    el.push(`<path d="${line}" fill="none" stroke="${C.accent}" stroke-width="1.6"/>`);
+  }
+
+  // 高度按实际内容收紧，避免图下方留一大片空白
+  const svg = document.getElementById('chart');
+  svg.setAttribute('viewBox', `0 0 ${W} ${botTop + BOT_H + 24}`);
+  svg.innerHTML = el.join('');
+}
+
+// ============ 明细表 ============
+function drawTable(d){
+  const rows = d.cycles.slice().reverse().map(c=>{
+    const k = c.kind==='bull' ? '牛市' : '熊市';
+    const cls = c.kind==='bull' ? 'up' : 'down';
+    const yrs = c.months/12;
+    return `<tr><td><span class="${cls}">${k}</span>${c.confirmed?'':' <span style="color:var(--muted)">进行中</span>'}</td>`
+         + `<td>${c.start} → ${c.end}</td>`
+         + `<td class="${cls}">${F(c.pct)}</td>`
+         + `<td>${yrs>=1 ? yrs.toFixed(1)+' 年' : c.months+' 个月'}</td></tr>`;
+  }).join('');
+  document.getElementById('table').innerHTML =
+    `<thead><tr><th>阶段</th><th>起止</th><th>幅度</th><th>时长</th></tr></thead><tbody>${rows}</tbody>`;
+}
+</script>
+</body>
+</html>
