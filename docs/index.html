@@ -36,6 +36,15 @@
   .card[data-tip]:hover .i{ opacity:1; border-color:var(--accent); color:var(--accent); }
   .m2{ color:var(--muted); }
   .up{ color:var(--bull); } .down{ color:var(--bear); }
+  .legend{ display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+           font-size:12px; color:var(--muted); margin:0 2px 8px; }
+  .legend .lg{ display:inline-flex; align-items:center; gap:5px; }
+  .legend .sw{ width:11px; height:11px; border-radius:2px; display:inline-block; }
+  .legend .lgsep{ width:1px; height:13px; background:var(--line); }
+  .capebar{ position:relative; width:170px; height:11px; border-radius:3px;
+            display:inline-block; border:1px solid var(--line); }
+  .capebar i{ position:absolute; top:-4px; width:2px; height:19px; background:var(--fg);
+              border-radius:1px; box-shadow:0 0 0 1.5px var(--card); }
   .chartbox{ border:1px solid var(--line); border-radius:12px; overflow-x:auto; overflow-y:hidden;
              background:var(--card); -webkit-overflow-scrolling:touch; position:relative; }
   .chartbox svg{ display:block; min-width:1080px; touch-action:pan-y; }
@@ -77,6 +86,15 @@
 
   <div class="cards" id="cards"></div>
 
+  <!-- 图例：这张图上"柱子"和"背景色"是两套独立的信息，不说清楚会看不懂 -->
+  <div class="legend">
+    <span class="lg"><i class="sw" style="background:var(--bull)"></i>绿柱＝牛市涨幅</span>
+    <span class="lg"><i class="sw" style="background:var(--bear)"></i>红柱＝熊市跌幅</span>
+    <span class="lgsep"></span>
+    <span class="lg">背景色＝当时估值：</span>
+    <span class="capebar" id="capebar"><i id="capemark" title="当前位置"></i></span>
+    <span class="lg" id="capelegend">—</span>
+  </div>
   <div class="chartbox"><svg id="chart" viewBox="0 0 1600 940" preserveAspectRatio="xMinYMin meet"></svg></div>
   <div class="hint">
     <span>鼠标移上去看每月数据 · <b>按住拖出一个框可放大该区间</b> · 双击复位（手机可左右滑动）</span>
@@ -402,6 +420,7 @@ function drawChart(d){
 
   // 供交互层使用
   CH.geo = { W,L,R,T,H,TOP_H,BOT_H,topBase,botTop,botBase,months,v0,v1,x,xm,invX,yTop,yBot,pct };
+  drawCapeLegend(d, capeColor, pct, vals);
   if(!CH.lookup) CH.lookup = buildLookup(d);
   document.getElementById('reset').style.display = CH.view ? 'inline-block' : 'none';
   document.getElementById('range').textContent = CH.view
@@ -522,6 +541,33 @@ function bindChart(){
   const reset = ()=>{ CH.view = null; drawChart(CH.d); hide(); };
   svg.addEventListener('dblclick', reset);
   document.getElementById('reset').addEventListener('click', reset);
+}
+
+// ============ 估值色带图例 ============
+// 渐变直接由 capeColor 逐档采样生成 —— 图例和图共用同一份配色公式，避免两边漂移。
+function drawCapeLegend(d, capeColor, pct, vals){
+  const bar = document.getElementById('capebar');
+  if(!bar) return;
+  const stops = [];
+  for(let i=0; i<=10; i++){
+    const v = vals[Math.min(vals.length-1, Math.round(i/10*(vals.length-1)))];
+    const c = capeColor(v);
+    // 图上色块是半透明叠在白底上的，图例这里换算成等效实色，看起来才一致
+    const rgb = c.fill.match(/\d+/g).map(Number);
+    const mix = rgb.map(x=>Math.round(255 + (x-255)*c.alpha/0.36*0.9));
+    stops.push(`rgb(${mix.join(',')}) ${i*10}%`);
+  }
+  bar.style.background = `linear-gradient(90deg, ${stops.join(',')})`;
+  const now = d.meta.latest.cape5;
+  const mark = document.getElementById('capemark');
+  if(now!=null && mark){
+    mark.style.left = `calc(${(pct(now)*100).toFixed(1)}% - 1px)`;
+    mark.title = `当前 5 年 CAPE ${now}`;
+  }
+  const X = d.meta.context || {};
+  document.getElementById('capelegend').innerHTML =
+    `便宜 ←　→ 贵　<b style="color:var(--fg)">当前 ${now}</b>`
+    + (X.cape_rank_n===1 ? '（史上最贵）' : X.cape_rank_n ? `（第 ${X.cape_rank_n} 贵）` : '');
 }
 
 // ============ 卡片详解：即时悬停 / 手机点按 ============
