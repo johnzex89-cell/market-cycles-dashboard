@@ -4,6 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>市场周期看板</title>
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
 <style>
   :root{
     --bg:#ffffff; --fg:#1a1d21; --muted:#6b7280; --line:#e5e7eb; --card:#f9fafb;
@@ -27,9 +28,22 @@
   .card .n{ font-size:11px; color:var(--muted); margin-top:3px; }
   .up{ color:var(--bull); } .down{ color:var(--bear); }
   .chartbox{ border:1px solid var(--line); border-radius:12px; overflow-x:auto; overflow-y:hidden;
-             background:var(--card); -webkit-overflow-scrolling:touch; }
-  .chartbox svg{ display:block; min-width:1080px; }
-  .hint{ font-size:12px; color:var(--muted); margin:8px 2px 26px; }
+             background:var(--card); -webkit-overflow-scrolling:touch; position:relative; }
+  .chartbox svg{ display:block; min-width:1080px; touch-action:pan-y; }
+  /* 桌面上不强制最小宽度：整张图完整显示，才能拉框放大（手机保留横向滚动） */
+  @media (min-width:1000px){ .chartbox svg{ min-width:0; width:100%; } }
+  .hint{ font-size:12px; color:var(--muted); margin:8px 2px 26px;
+         display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
+  #reset{ display:none; cursor:pointer; color:var(--accent); background:none;
+          border:1px solid var(--line); border-radius:6px; padding:3px 10px;
+          font-size:12px; font-family:inherit; }
+  #reset:hover{ border-color:var(--accent); }
+  #tip{ position:fixed; pointer-events:none; display:none; z-index:9;
+        background:rgba(20,23,26,.95); color:#e8eaed; border-radius:8px;
+        padding:9px 11px; font-size:12px; line-height:1.6; max-width:260px;
+        box-shadow:0 6px 22px rgba(0,0,0,.28); }
+  #tip b{ font-weight:600; }
+  #tip .g{ color:#7ddb9f; } #tip .r{ color:#ff8d8d; } #tip .m{ color:#9aa3ad; }
   h2{ font-size:16px; margin:30px 0 10px; }
   .note{ background:var(--card); border:1px solid var(--line); border-left:3px solid var(--accent);
          border-radius:8px; padding:13px 15px; margin-bottom:12px; }
@@ -55,7 +69,12 @@
   <div class="cards" id="cards"></div>
 
   <div class="chartbox"><svg id="chart" viewBox="0 0 1600 940" preserveAspectRatio="xMinYMin meet"></svg></div>
-  <div class="hint">图较宽，手机上可左右滑动查看 · 鼠标悬停各段可看起止时间</div>
+  <div class="hint">
+    <span>鼠标移上去看每月数据 · <b>按住拖出一个框可放大该区间</b> · 双击复位（手机可左右滑动）</span>
+    <button id="reset">↺ 复位全图</button>
+    <span id="range" style="color:var(--muted)"></span>
+  </div>
+  <div id="tip"></div>
 
   <h2 id="method">三层分别是什么，跟原图差在哪</h2>
   <div class="note">
@@ -90,7 +109,8 @@
 </div>
 
 <script>
-const F = (n, d=1) => (n>=0?'+':'') + n.toFixed(d) + '%';
+// 先按精度取整再判符号，否则 -0.04 会显示成 "-0.0%"
+const F = (n, d=1) => { const r = +n.toFixed(d); return (r>=0?'+':'') + r.toFixed(d) + '%'; };
 
 fetch('data.json?t=' + Date.now()).then(r=>r.json()).then(render).catch(e=>{
   document.getElementById('cards').innerHTML =
@@ -150,7 +170,11 @@ const C = {
 };
 
 // ============ 主图 ============
+// CH 保存图表状态：view=当前显示的月份区间（null=全图），geo/lookup 供交互层复用。
+const CH = { d:null, view:null, geo:null, lookup:null, bound:false };
+
 function drawChart(d){
+  CH.d = d;
   const W=1600, L=64, R=26, T=26;
   const TOP_H=470;                 // 上层：周期
   const GAP=96;                    // 中间留白：要同时放年份轴和下层标题，窄了会叠字
@@ -158,46 +182,51 @@ function drawChart(d){
   const topBase = T + TOP_H*0.72;  // 上层 0 线（下方留给熊市）
   const botTop  = T + TOP_H + GAP;
   const botBase = botTop + BOT_H/2;
+  const H = botTop + BOT_H + 24;
 
-  const months = d.price.map(r=>r[0]);
+  const allMonths = d.price.map(r=>r[0]);
+  const v0 = CH.view ? Math.max(0, CH.view.i0) : 0;
+  const v1 = CH.view ? Math.min(allMonths.length-1, CH.view.i1) : allMonths.length-1;
+  const months = allMonths.slice(v0, v1+1);
   const mIdx = new Map(months.map((m,i)=>[m,i]));
-  const x = i => L + (W-L-R) * (i/(months.length-1));
+  const n = Math.max(1, months.length-1);
+  const x = i => L + (W-L-R) * (i/n);
   const xm = m => x(mIdx.get(m) ?? 0);
+  const invX = px => (px - L) / (W-L-R) * n;      // 反查：像素 → 可见区间内的索引
 
-  // 上层纵轴：覆盖所有段的幅度
+  // —— 上层纵轴：只按**可见**区间内的幅度定标，放大后才有意义 ——
   let maxUp=0, maxDn=0;
-  d.cycles.forEach(c=>c.points.forEach(p=>{ if(p[1]>maxUp)maxUp=p[1]; if(p[1]<maxDn)maxDn=p[1]; }));
-  const upSpan = Math.max(maxUp, 60), dnSpan = Math.min(maxDn, -30);
+  d.cycles.forEach(c=>c.points.forEach(p=>{
+    if(!mIdx.has(p[0])) return;
+    if(p[1]>maxUp)maxUp=p[1]; if(p[1]<maxDn)maxDn=p[1];
+  }));
+  const upSpan = Math.max(maxUp*1.08, 20), dnSpan = Math.min(maxDn*1.08, -10);
   const yTop = v => v>=0
       ? topBase - (v/upSpan) * (topBase - T)
       : topBase + (v/dnSpan) * ((T+TOP_H) - topBase);
 
-  // 下层纵轴：用 96 分位而不是最大值定标，否则少数极端月份会把整条线压成一条直线。
-  // 超出量程的点截断到边界（视觉上顶到框，不失真为"没发生"）。
-  const bAbs = d.breadth.map(r=>Math.abs(r[1])).sort((a,b)=>a-b);
-  const bMax = Math.max(bAbs[Math.floor(bAbs.length*0.96)] || 10, 10);
+  // —— 下层纵轴：可见区间的 96 分位定标，否则少数极端月份会把整条线压平 ——
+  const bVis = d.breadth.filter(r=>mIdx.has(r[0]));
+  const bAbs = bVis.map(r=>Math.abs(r[1])).sort((a,b)=>a-b);
+  const bMax = Math.max(bAbs[Math.floor(bAbs.length*0.96)] || 10, 5);
   const clamp = v => Math.max(-bMax, Math.min(bMax, v));
   const yBot = v => botBase - (clamp(v)/bMax) * (BOT_H/2 - 8);
 
   const el = [];
   const esc = s => String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;');
 
-  // —— 背景：CAPE5 色带 ——
+  // —— 背景：CAPE5 色带（分位数按**全历史**算，放大时颜色含义不跟着变）——
   const capeMap = new Map(d.cape5);
   const vals = d.cape5.map(r=>r[1]).slice().sort((a,b)=>a-b);
-  const pct = v => { // 分位数 0..1
+  const pct = v => {
     let lo=0, hi=vals.length-1;
     while(lo<hi){ const mid=(lo+hi)>>1; if(vals[mid]<v) lo=mid+1; else hi=mid; }
     return lo/(vals.length-1);
   };
-  const colw = (W-L-R)/(months.length-1);
+  const colw = (W-L-R)/n;
   const bandTop = T, bandH = TOP_H+GAP+BOT_H;
-  // 盈利数据比股价滞后，尾部若干月没有 CAPE。这里让色带**沿用最后一个已知值**延续到最右端，
-  // 使背景与图表同宽（否则最新一段会看起来画到了背景外面），
-  // 再叠一层斜纹明示"这段是沿用的、不是实测估值"。
   // 盈利定稿比股价滞后几个月。那几个月的 CAPE 是真算的（分子用当月价格），
-  // 但分母沿用截至 earnLatest 的盈利窗口 —— 与 Shiller/multpl 的标准做法一致。
-  // 用斜纹把这段标出来，提醒"分母不是当月最新的"。
+  // 但分母沿用截至 earnLatest 的盈利窗口 —— 与 Shiller/multpl 的标准做法一致，用斜纹标出。
   const earnLatest = d.meta.sources.earnings.latest;
   el.push(`<defs><pattern id="nodata" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`
         + `<line x1="0" y1="0" x2="0" y2="7" stroke="#ffffff" stroke-width="3" opacity="0.5"/></pattern></defs>`);
@@ -214,20 +243,23 @@ function drawChart(d){
     const col = capeColor(c);   // 蓝(便宜) → 灰(中性) → 红(贵)，公式只此一份
     const xx = (x(i)-colw/2).toFixed(1), ww = (colw+0.6).toFixed(1);
     el.push(`<rect x="${xx}" y="${bandTop}" width="${ww}" height="${bandH}" fill="${col.fill}" opacity="${col.alpha.toFixed(3)}"/>`);
-    if(m > earnLatest){   // 盈利尚未定稿的月份：叠斜纹
+    if(m > earnLatest){
       el.push(`<rect x="${xx}" y="${bandTop}" width="${ww}" height="${bandH}" fill="url(#nodata)"/>`);
     }
   });
 
-  // —— 上层：网格与 0 线 ——
-  for(const v of [150,100,50,0,-25,-50]){
-    if(v>upSpan || v<dnSpan) continue;
+  // —— 上层：网格与 0 线（刻度随量程自适应）——
+  const tickStep = upSpan>200 ? 50 : upSpan>80 ? 25 : upSpan>30 ? 10 : 5;
+  const ticks = [0];
+  for(let v=tickStep; v<=upSpan; v+=tickStep) ticks.push(v);
+  for(let v=-tickStep; v>=dnSpan; v-=tickStep) ticks.push(v);
+  ticks.forEach(v=>{
     const y=yTop(v);
     el.push(`<line x1="${L}" y1="${y.toFixed(1)}" x2="${W-R}" y2="${y.toFixed(1)}" stroke="${C.line}" stroke-width="${v===0?1.4:1}" ${v===0?'':'stroke-dasharray="3 4"'}/>`);
     el.push(`<text x="${L-8}" y="${(y+4).toFixed(1)}" text-anchor="end" font-size="11" fill="${C.muted}">${v>0?'+':''}${v}%</text>`);
-  }
+  });
 
-  // —— 上层：每段周期 ——
+  // —— 上层：每段周期（裁到可见区间）——
   d.cycles.forEach(c=>{
     const isBull = c.kind==='bull';
     const color = isBull ? C.bull : C.bear;
@@ -236,12 +268,11 @@ function drawChart(d){
     const dpath = pts.map((p,i)=>`${i?'L':'M'}${xm(p[0]).toFixed(1)},${yTop(p[1]).toFixed(1)}`).join('')
                 + `L${xm(pts[pts.length-1][0]).toFixed(1)},${topBase.toFixed(1)}`
                 + `L${xm(pts[0][0]).toFixed(1)},${topBase.toFixed(1)}Z`;
-    const title = `${isBull?'牛市':'熊市'} ${c.start} → ${c.end}　${F(c.pct)}　${c.months} 个月`
-                + (c.confirmed ? '' : '（进行中）');
-    el.push(`<path d="${dpath}" fill="${color}" opacity="${c.confirmed?0.82:0.5}"><title>${esc(title)}</title></path>`);
+    el.push(`<path d="${dpath}" fill="${color}" opacity="${c.confirmed?0.82:0.5}"/>`);
 
-    // 幅度标注：只标较大的段，避免挤成一团
-    if(Math.abs(c.pct) >= 22){
+    // 幅度标注：放大后段变少，阈值放宽，让小段也标出来
+    const threshold = months.length > 300 ? 22 : months.length > 120 ? 10 : 0;
+    if(Math.abs(c.pct) >= threshold){
       const ext = pts.reduce((a,p)=> (isBull ? p[1]>a[1] : p[1]<a[1]) ? p : a, pts[0]);
       const ty = isBull ? yTop(ext[1])-6 : yTop(ext[1])+13;
       el.push(`<text x="${xm(ext[0]).toFixed(1)}" y="${ty.toFixed(1)}" text-anchor="middle" font-size="10.5" font-weight="600" fill="${color}">${c.pct.toFixed(0)}%</text>`);
@@ -249,22 +280,30 @@ function drawChart(d){
   });
 
   // —— 估值数据截止线 ——
-  if(earnLatest && earnLatest < months[months.length-1]){
+  if(earnLatest && earnLatest >= months[0] && earnLatest < months[months.length-1]){
     const lx = xm(earnLatest);
     el.push(`<line x1="${lx.toFixed(1)}" y1="${T}" x2="${lx.toFixed(1)}" y2="${T+TOP_H}" stroke="${C.muted}" stroke-width="1" stroke-dasharray="2 3" opacity="0.6"/>`);
-    // 截止线通常靠近右端，文字放右边会溢出图外 —— 贴不下就改成右对齐挂在线的左侧
-    const label = `斜纹区间：盈利尚未定稿，估值分母沿用截至 ${earnLatest} 的盈利`;
+    const label = `${earnLatest} 后盈利未定稿，斜纹段估值为初步值`;
     const fitsRight = lx + label.length * 10 + 12 < W - R;
     el.push(`<text x="${(fitsRight ? lx+5 : lx-5).toFixed(1)}" y="${T+12}" font-size="10" `
           + `text-anchor="${fitsRight ? 'start' : 'end'}" fill="${C.muted}">${label}</text>`);
   }
 
-  // —— 年份轴 ——
+  // —— 年份轴（间隔随跨度自适应；跨度小于 3 年时标到月）——
   el.push(`<line x1="${L}" y1="${T+TOP_H+16}" x2="${W-R}" y2="${T+TOP_H+16}" stroke="${C.line}"/>`);
+  const spanY = months.length/12;
+  const yearStep = spanY>60 ? 5 : spanY>25 ? 5 : spanY>12 ? 2 : 1;
+  const byMonth = spanY <= 3;
   months.forEach((m,i)=>{
-    if(!m.endsWith('-01') || (+m.slice(0,4))%5) return;
+    const [yy,mm] = m.split('-');
+    let show=false, text='';
+    if(byMonth){
+      const step = spanY<=1 ? 1 : spanY<=2 ? 2 : 3;
+      if((+mm-1) % step === 0){ show=true; text = mm==='01' ? yy : `${yy.slice(2)}/${mm}`; }
+    }else if(mm==='01' && (+yy)%yearStep===0){ show=true; text=yy; }
+    if(!show) return;
     el.push(`<line x1="${x(i).toFixed(1)}" y1="${T+TOP_H+16}" x2="${x(i).toFixed(1)}" y2="${T+TOP_H+21}" stroke="${C.muted}"/>`);
-    el.push(`<text x="${x(i).toFixed(1)}" y="${T+TOP_H+35}" text-anchor="middle" font-size="11" fill="${C.muted}">${m.slice(0,4)}</text>`);
+    el.push(`<text x="${x(i).toFixed(1)}" y="${T+TOP_H+35}" text-anchor="middle" font-size="11" fill="${C.muted}">${text}</text>`);
   });
 
   // —— 下层：宽度 ——
@@ -276,17 +315,144 @@ function drawChart(d){
     el.push(`<line x1="${L}" y1="${yBot(v).toFixed(1)}" x2="${W-R}" y2="${yBot(v).toFixed(1)}" stroke="${C.line}" stroke-dasharray="3 4"/>`);
     el.push(`<text x="${L-8}" y="${(yBot(v)+4).toFixed(1)}" text-anchor="end" font-size="11" fill="${C.muted}">${v>0?'+':''}${v}</text>`);
   }
-  const bpts = d.breadth.filter(r=>mIdx.has(r[0]));
-  if(bpts.length){
-    const line = bpts.map((r,i)=>`${i?'L':'M'}${xm(r[0]).toFixed(1)},${yBot(r[1]).toFixed(1)}`).join('');
-    el.push(`<path d="${line}L${xm(bpts[bpts.length-1][0]).toFixed(1)},${botBase}L${xm(bpts[0][0]).toFixed(1)},${botBase}Z" fill="${C.accent}" opacity="0.13"/>`);
+  if(bVis.length){
+    const line = bVis.map((r,i)=>`${i?'L':'M'}${xm(r[0]).toFixed(1)},${yBot(r[1]).toFixed(1)}`).join('');
+    el.push(`<path d="${line}L${xm(bVis[bVis.length-1][0]).toFixed(1)},${botBase}L${xm(bVis[0][0]).toFixed(1)},${botBase}Z" fill="${C.accent}" opacity="0.13"/>`);
     el.push(`<path d="${line}" fill="none" stroke="${C.accent}" stroke-width="1.6"/>`);
   }
 
-  // 高度按实际内容收紧，避免图下方留一大片空白
+  // —— 交互层：十字线 / 悬停点 / 拉框选区（初始隐藏）——
+  el.push(`<line id="cx" x1="0" y1="${T}" x2="0" y2="${botTop+BOT_H}" stroke="${C.muted}" stroke-width="1" stroke-dasharray="3 3" style="display:none" pointer-events="none"/>`);
+  el.push(`<circle id="cpt" r="3.5" fill="none" stroke-width="2" style="display:none" pointer-events="none"/>`);
+  el.push(`<circle id="cpb" r="3.5" fill="${C.accent}" style="display:none" pointer-events="none"/>`);
+  el.push(`<rect id="selr" fill="${C.accent}" fill-opacity="0.10" stroke="${C.accent}" stroke-width="1" stroke-dasharray="4 3" style="display:none" pointer-events="none"/>`);
+
   const svg = document.getElementById('chart');
-  svg.setAttribute('viewBox', `0 0 ${W} ${botTop + BOT_H + 24}`);
+  svg.setAttribute('viewBox', `0 0 ${W} ${H}`);
   svg.innerHTML = el.join('');
+
+  // 供交互层使用
+  CH.geo = { W,L,R,T,H,TOP_H,BOT_H,topBase,botTop,botBase,months,v0,v1,x,xm,invX,yTop,yBot,pct };
+  if(!CH.lookup) CH.lookup = buildLookup(d);
+  document.getElementById('reset').style.display = CH.view ? 'inline-block' : 'none';
+  document.getElementById('range').textContent = CH.view
+    ? `已放大：${months[0]} → ${months[months.length-1]}（${months.length} 个月）` : '';
+  if(!CH.bound){ bindChart(); CH.bound = true; }
+}
+
+// 月份 → 该月各层数值，供 tooltip 用
+function buildLookup(d){
+  const price = new Map(d.price), cape = new Map(d.cape5), br = new Map(d.breadth);
+  const cyc = new Map();
+  d.cycles.forEach(c=>c.points.forEach(p=>cyc.set(p[0], {c, cum:p[1]})));
+  return { price, cape, br, cyc };
+}
+
+// ============ 交互：十字线 + 悬停数据 + 拉框放大 ============
+function bindChart(){
+  const svg = document.getElementById('chart');
+  const tip = document.getElementById('tip');
+  let drag = null;
+
+  const toVB = e => {                       // 屏幕坐标 → viewBox 坐标（矩阵换算，兼容缩放与留白）
+    const m = svg.getScreenCTM();
+    if(!m) return null;
+    const pt = new DOMPoint(e.clientX, e.clientY).matrixTransform(m.inverse());
+    return { x: pt.x, y: pt.y };
+  };
+  const hide = () => {
+    ['cx','cpt','cpb'].forEach(id=>{ const n=svg.querySelector('#'+id); if(n) n.style.display='none'; });
+    tip.style.display='none';
+  };
+
+  svg.addEventListener('pointermove', e=>{
+    const g = CH.geo; if(!g) return;
+    const v = toVB(e); if(!v) return;
+
+    if(drag){                               // 正在拉框
+      const r = svg.querySelector('#selr'); if(!r) return;
+      drag.x1 = Math.max(g.L, Math.min(v.x, g.W-g.R));
+      r.setAttribute('x', Math.min(drag.x0, drag.x1));
+      r.setAttribute('y', g.T);
+      r.setAttribute('width', Math.abs(drag.x1-drag.x0));
+      r.setAttribute('height', g.botTop + g.BOT_H - g.T);
+      r.style.display='block';
+      hide();
+      return;
+    }
+
+    if(v.x < g.L || v.x > g.W-g.R || v.y < g.T || v.y > g.botTop+g.BOT_H){ hide(); return; }
+    const i = Math.max(0, Math.min(g.months.length-1, Math.round(g.invX(v.x))));
+    const m = g.months[i], px = g.x(i);
+    const cx = svg.querySelector('#cx'), cpt = svg.querySelector('#cpt'), cpb = svg.querySelector('#cpb');
+    cx.setAttribute('x1', px); cx.setAttribute('x2', px); cx.style.display='block';
+
+    const K = CH.lookup;
+    const cy = K.cyc.get(m), cp = K.cape.get(m), bv = K.br.get(m), pr = K.price.get(m);
+    if(cy){
+      cpt.setAttribute('cx', px); cpt.setAttribute('cy', g.yTop(cy.cum));
+      cpt.setAttribute('stroke', cy.c.kind==='bull' ? C.bull : C.bear);
+      cpt.style.display='block';
+    } else cpt.style.display='none';
+    if(bv!=null){
+      cpb.setAttribute('cx', px); cpb.setAttribute('cy', g.yBot(bv)); cpb.style.display='block';
+    } else cpb.style.display='none';
+
+    const rows = [`<b>${m}</b>`];
+    if(pr!=null) rows.push(`标普 500　<b>${pr.toLocaleString('en-US',{maximumFractionDigits:0})}</b>`);
+    if(cy){
+      const isB = cy.c.kind==='bull';
+      const kindCls = isB ? 'g' : 'r';
+      const monthsIn = g.months.length && cy.c.points.findIndex(p=>p[0]===m) + 1;
+      rows.push(`<span class="${kindCls}">${isB?'牛市':'熊市'}第 ${monthsIn} 个月，累计 ${F(cy.cum)}</span>`
+              + `<br><span class="m">本段 ${cy.c.start} → ${cy.c.end}　全程 ${F(cy.c.pct)}</span>`);
+    }
+    if(cp!=null) rows.push(`5年CAPE <b>${cp}</b> <span class="m">（历史 ${Math.round(g.pct(cp)*100)}% 分位）</span>`);
+    if(bv!=null){
+      // 判词跟着显示出来的数字走，否则会出现"+0.0% 偏窄"这种自相矛盾
+      const r = +bv.toFixed(1);
+      const word = r>0 ? '偏宽·普涨' : r<0 ? '偏窄·少数大票带涨' : '基本持平';
+      rows.push(`宽度 <b>${F(bv)}</b> <span class="m">（${word}）</span>`);
+    }
+    tip.innerHTML = rows.join('<br>');
+    tip.style.display='block';
+    const tw = tip.offsetWidth, left = e.clientX + 16;
+    tip.style.left = (left + tw > window.innerWidth - 8 ? e.clientX - tw - 16 : left) + 'px';
+    tip.style.top = Math.max(8, Math.min(window.innerHeight - tip.offsetHeight - 8, e.clientY - 20)) + 'px';
+  });
+
+  svg.addEventListener('pointerleave', ()=>{ if(!drag) hide(); });
+
+  // 拉框只对鼠标生效，触屏保持原生滚动
+  svg.addEventListener('pointerdown', e=>{
+    if(e.pointerType!=='mouse' || e.button!==0) return;
+    const g = CH.geo, v = toVB(e); if(!g || !v) return;
+    try{ svg.setPointerCapture(e.pointerId); }catch(err){}
+    drag = { x0: Math.max(g.L, Math.min(v.x, g.W-g.R)) };
+    e.preventDefault();
+  });
+
+  const endDrag = ()=>{
+    const r = svg.querySelector('#selr'); if(r) r.style.display='none';
+    const dd = drag; drag = null;
+    if(!dd || dd.x1===undefined) return;
+    const g = CH.geo;
+    if(Math.abs(dd.x1-dd.x0) < 12) return;          // 太窄视为误触
+    const a = Math.floor(g.invX(Math.min(dd.x0, dd.x1)));
+    const b = Math.ceil (g.invX(Math.max(dd.x0, dd.x1)));
+    const lo = Math.max(0, a), hi = Math.min(g.months.length-1, b);
+    if(hi - lo < 5) return;                          // 至少留 6 个月，否则没意义
+    CH.view = { i0: g.v0 + lo, i1: g.v0 + hi };      // 换算回全量索引
+    drawChart(CH.d);
+  };
+  svg.addEventListener('pointerup', endDrag);
+  window.addEventListener('pointercancel', ()=>{
+    drag = null; const r = svg.querySelector('#selr'); if(r) r.style.display='none';
+  });
+
+  const reset = ()=>{ CH.view = null; drawChart(CH.d); hide(); };
+  svg.addEventListener('dblclick', reset);
+  document.getElementById('reset').addEventListener('click', reset);
 }
 
 // ============ 明细表 ============
