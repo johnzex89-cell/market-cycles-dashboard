@@ -21,6 +21,13 @@
   .wrap{ max-width:1180px; margin:0 auto; padding:28px 18px 60px; }
   h1{ font-size:23px; margin:0 0 6px; letter-spacing:-.2px; }
   .sub{ color:var(--muted); font-size:13px; margin-bottom:22px; }
+  #pb-now{ border:1px solid var(--line); border-radius:10px; padding:14px 16px;
+           background:var(--card); margin-bottom:12px; }
+  #pb-now .big{ font-size:19px; font-weight:600; }
+  #pb-tiers td.act{ color:var(--muted); }
+  #pb-tiers tr.on{ background:rgba(37,99,235,.08); }
+  #pb-tiers tr.on td{ font-weight:600; }
+  #pb-tiers tr.done td{ color:var(--muted); }
   #freshness{ font-size:12.5px; border:1px solid var(--line); background:var(--card);
               border-radius:8px; padding:9px 13px; margin-bottom:14px; color:var(--muted); }
   #freshness b{ color:var(--fg); font-weight:600; }
@@ -110,6 +117,36 @@
     <span id="range" style="color:var(--muted)"></span>
   </div>
   <div id="tip"></div>
+
+  <h2 id="playbook">怎么用这张图投资</h2>
+  <div id="pb-now"></div>
+  <table id="pb-tiers"></table>
+  <div class="note" style="margin-top:14px">
+    <b>两条基本规则</b>（1960 年以来回测，见下方依据）：<br>
+    <b>① 手上已有的一笔钱</b>：<b>分 3~6 个月投完，不要再拖</b>。
+    拖到两三年反而更差 —— 一次性投入 20 年后 <b id="pb-lump">—</b> 倍，
+    拖成 36 个月只有 <b id="pb-lump36">—</b> 倍。分 6 个月只是防"刚投完就遇上崩盘"的心理冲击，代价几乎为零。<br>
+    <b>② 每年新进来的钱</b>：<b>到账就买，不要留着等机会</b>。
+    到账就买 20 年 <b id="pb-flow">—</b> 倍；留一半等跌 30% 才投只有 <b id="pb-keep">—</b> 倍（已算上 4% 现金利息）。
+    <b>因为持续的现金流本身就是抄底弹药</b> —— 2008 年那种熊市持续 14 个月，期间自然会有一整年的新钱买在低位，
+    不需要额外囤现金去等它。
+  </div>
+  <div class="note">
+    <b>为什么按跌幅分档，而不是按月份平摊</b>：从"已跌 10%"到真正见底，历史中位只有
+    <b id="pb-lag">—</b> 个月，但最长拖了 <b id="pb-lagmax">—</b> 个月（1973-74），
+    而且<b>跌得最惨的几次全是拖得久的</b>。按月份平摊必然两头不讨好。<br>
+    按跌幅分档的回测结果：平均成本只比最低点高 <b id="pb-prem">—</b>%，最坏的一次高 <b id="pb-worst">—</b>%；
+    而"跌 10% 就全买"最坏会高 <b id="pb-allin">—</b>%。
+  </div>
+  <div class="note" style="border-left-color:var(--bear)">
+    <span class="warn">三个前提，不成立就别照做</span>：<br>
+    ① 上面所有回测都以<b>持有 20 年</b>为前提。最差的起点是 1960 年（20 年只有 1.30 倍，滞胀年代）。
+    <b>5 年内要用的钱不适用。</b><br>
+    ② <b id="pb-cape-warn">—</b> 从这种估值水平起步，未来十年回报大概率低于历史中位数。
+    这不改变"到账就买"（成本会被持续投入摊平），但<b>头几年的预期要放低</b>。<br>
+    ③ 这是 <b>18 次下跌 / 10 个 20 年起点</b>的历史统计，样本不算多，未来完全可能出现没见过的形态。
+    它的价值是<b>把最坏情况压下来</b>，不是保证赚钱。
+  </div>
 
   <h2 id="method">三层分别是什么，跟原图差在哪</h2>
   <div class="note">
@@ -324,6 +361,7 @@ function render(d){
       + `<div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`).join('');
   bindCardTips();
 
+  drawPlaybook(d);
   drawChart(d);
   drawTable(d);
 
@@ -690,6 +728,47 @@ function bindCardTips(){
   document.addEventListener('click', e=>{
     if(!e.target.closest('.card[data-tip]')) tip.style.display='none';
   });
+}
+
+// ============ 投资规则：结合当前点位给出档位 ============
+function drawPlaybook(d){
+  const pb = d.playbook; if(!pb) return;
+  const L = d.meta.latest, X = d.meta.context || {}, E = pb.evidence || {};
+  const dd = pb.drawdown_pct;
+  const nowEl = document.getElementById('pb-now');
+  const nxt = pb.next_tier;
+  nowEl.innerHTML =
+    `<div class="big">当前处于 <span style="color:var(--accent)">${H(pb.current_tier)}</span>`
+    + `　<span style="font-size:14px;color:var(--muted)">`
+    + `标普 ${L.price.toLocaleString('en-US',{maximumFractionDigits:0})}，`
+    + `距历史最高点 ${dd>=-0.05 ? '就在高点' : F(dd)}</span></div>`
+    + `<div style="font-size:12.5px;color:var(--muted);margin-top:6px">`
+    + `历史最高点 ${pb.ath.toLocaleString('en-US',{maximumFractionDigits:0})}（${H(pb.ath_month)}）`
+    + (nxt ? `　·　跌到 <b style="color:var(--fg)">${nxt.trigger_price.toLocaleString('en-US',{maximumFractionDigits:0})}</b>`
+           + `（−${nxt.drop_pct}%）进入<b style="color:var(--fg)">${H(nxt.name)}</b>：${H(nxt.action)}` : '')
+    + `</div>`;
+
+  document.getElementById('pb-tiers').innerHTML =
+    `<thead><tr><th>触发条件</th><th>标普跌到</th><th>这一档该做什么</th></tr></thead><tbody>`
+    + pb.tiers.map(t=>{
+        const cur = t.name === pb.current_tier;
+        const cls = cur ? 'on' : (t.reached ? 'done' : '');
+        return `<tr class="${cls}"><td>${t.drop_pct===0?'常规状态':'从高点跌 '+t.drop_pct+'%'}`
+             + `${cur?' ←现在':''}</td>`
+             + `<td>${t.trigger_price.toLocaleString('en-US',{maximumFractionDigits:0})}</td>`
+             + `<td class="act">${H(t.action)}</td></tr>`;
+      }).join('') + '</tbody>';
+
+  const set = (id, v) => { const el = document.getElementById(id); if(el) el.textContent = v; };
+  set('pb-lump', E.lump_sum_20y); set('pb-lump36', E.lump_36m_20y);
+  set('pb-flow', E.flow_buy_now_20y); set('pb-keep', E.flow_keep50_20y);
+  set('pb-lag', E.bear_median_lag_months); set('pb-lagmax', E.bear_max_lag_months);
+  set('pb-prem', E.ladder_median_premium_pct); set('pb-worst', E.ladder_worst_premium_pct);
+  set('pb-allin', E.allin_worst_premium_pct);
+  const cw = document.getElementById('pb-cape-warn');
+  if(cw) cw.textContent = X.cape_rank_n === 1
+    ? `当前估值是 ${X.cape_since?.slice(0,4)} 年以来最贵的一个月。`
+    : `当前估值排历史第 ${X.cape_rank_n} 贵（共 ${X.cape_total} 个月）。`;
 }
 
 // ============ 明细表 ============

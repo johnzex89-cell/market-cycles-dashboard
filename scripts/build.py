@@ -297,6 +297,30 @@ def main() -> int:
 
     latest_cycle = paths[-1]
 
+    # —— 行动档位：把"跌多少该加多少"变成看得见的触发点位 ——
+    # 档位阈值来自 260817 的回测：按跌幅分档远优于按月份平摊
+    #（递增五档平均成本仅比最低点高 2.7%，最坏 43%；"跌10%就全买"最坏高 82%）。
+    # 用**历史最高点**做基准，而不是当前周期起点 —— 加码看的是"离最高点跌了多少"。
+    ath = max(prices)
+    ath_month = months[prices.index(ath)]
+    drawdown = (prices[-1] / ath - 1) * 100
+    ACTION_TIERS = [
+        (0, "常规", "当年到账的钱正常投，不留等待金"),
+        (10, "第一档", "把当年剩余额度提前投出"),
+        (20, "第二档", "动用次年额度的一半"),
+        (30, "第三档", "动用次年全部额度"),
+        (40, "第四档", "历史级机会（1974/2008 级），能调动的都上"),
+    ]
+    tiers = [{
+        "drop_pct": t,
+        "name": name,
+        "action": act,
+        "trigger_price": round(ath * (1 - t / 100), 1),
+        "reached": -drawdown >= t,
+    } for t, name, act in ACTION_TIERS]
+    current_tier = max((t for t in tiers if t["reached"]), key=lambda t: t["drop_pct"])
+    next_tier = next((t for t in tiers if not t["reached"]), None)
+
     # —— 历史对照：光给一个数字看不出好坏，得说清它在历史上算什么水平 ——
     def median(xs: list[float]) -> float:
         s = sorted(xs)
@@ -408,6 +432,25 @@ def main() -> int:
 
     out = {
         "meta": meta,
+        "playbook": {
+            "ath": round(ath, 1), "ath_month": ath_month,
+            "drawdown_pct": round(drawdown, 2),
+            "tiers": tiers,
+            "current_tier": current_tier["name"],
+            "next_tier": next_tier,
+            # 回测依据（1960 年以来 18 次下跌 / 10 个 20 年起点），页面直接引用，不硬编码
+            "evidence": {
+                "ladder_median_premium_pct": 2.7,     # 递增五档：成本比最低点高（中位）
+                "ladder_worst_premium_pct": 43.0,     # 最坏一次
+                "allin_worst_premium_pct": 82.1,      # 跌10%就全买的最坏一次
+                "lump_sum_20y": 4.06,                 # 存量一次性投入 20 年（中位倍数）
+                "lump_36m_20y": 3.30,                 # 存量分 36 个月投入
+                "flow_buy_now_20y": 2.44,             # 现金流到账就买
+                "flow_keep50_20y": 2.12,              # 留 50% 等跌 30%（含 4% 现金利息）
+                "bear_median_lag_months": 2,          # 从跌10%到见底的中位月数
+                "bear_max_lag_months": 18,            # 最长（1973-74）
+            },
+        },
         "cycles": shown,
         "cape10_cross_check": cross,
         "vw_market_cross_check": vw_cross,

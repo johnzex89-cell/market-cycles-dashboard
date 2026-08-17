@@ -252,6 +252,28 @@ def main() -> int:
         if bad:
             warnings.append(f"近月市值加权与 FF3 偏差 >1pp 的月份：{bad[:3]}")
 
+    # ========== 9. 投资档位：触发点位必须与历史高点自洽 ==========
+    # 这块是直接给人看"跌到多少动手"的，算错了不会有任何外部信号，只能自己钉。
+    pb = d.get("playbook")
+    if pb:
+        ath = pb.get("ath")
+        check(isinstance(ath, (int, float)) and ath > 0, "playbook.ath 缺失或非正数")
+        if ath:
+            check(abs(ath - max(v for _, v in d["price"])) < 1e-6,
+                  f"playbook.ath={ath} 与价格序列的最高点不一致")
+            for t in pb.get("tiers", []):
+                want = ath * (1 - t["drop_pct"] / 100)
+                if abs(t["trigger_price"] - want) > 0.5:
+                    failures.append(f"档位 {t['name']} 触发价 {t['trigger_price']} 与 "
+                                    f"ath×(1−{t['drop_pct']}%)={want:.1f} 不符")
+                    break
+                reached = -pb["drawdown_pct"] >= t["drop_pct"]
+                if reached != t["reached"]:
+                    failures.append(f"档位 {t['name']} 的 reached 标记与当前回撤不符")
+                    break
+            check(abs(pb["drawdown_pct"] - (latest["price"] / ath - 1) * 100) < 0.05,
+                  "playbook.drawdown_pct 与最新价/最高点算出来的不一致")
+
     # —— 输出 ——
     print(f"自检目标：{os.path.relpath(target, ROOT)}")
     print(f"  周期 {len(cycles)} 段 | 最新 {latest['month']} 价格 {latest['price']} "
@@ -265,7 +287,7 @@ def main() -> int:
         for f_ in failures:
             print(f"   - {f_}")
         return 1
-    print("\n✅ 自检通过（8 组断言）")
+    print("\n✅ 自检通过（9 组断言）")
     return 0
 
 
