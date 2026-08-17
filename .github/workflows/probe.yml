@@ -1,0 +1,15 @@
+name: 数据源探测
+
+on:
+  workflow_dispatch:       # 只手动触发，用来定死每层用哪个源
+
+jobs:
+  probe:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: 探测各数据源在 CI 环境的可达性
+        run: python3 scripts/probe_sources.py
