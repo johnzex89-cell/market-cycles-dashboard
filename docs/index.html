@@ -26,7 +26,14 @@
   .card .k{ font-size:12px; color:var(--muted); margin-bottom:4px; }
   .card .v{ font-size:21px; font-weight:600; letter-spacing:-.3px; }
   .card .n{ font-size:11px; color:var(--muted); margin-top:4px; line-height:1.5; }
-  .card{ cursor:help; }
+  .card{ position:relative; }
+  .card[data-tip]{ cursor:pointer; }
+  .card[data-tip]:hover{ border-color:var(--accent); }
+  /* 用一个明确的 ⓘ 标记表示"这里有详解"，而不是把光标变成问号（那样没人看得懂） */
+  .card .i{ position:absolute; top:9px; right:10px; width:14px; height:14px; line-height:13px;
+            text-align:center; border:1px solid var(--muted); border-radius:50%;
+            font-size:9px; color:var(--muted); opacity:.55; }
+  .card[data-tip]:hover .i{ opacity:1; border-color:var(--accent); color:var(--accent); }
   .m2{ color:var(--muted); }
   .up{ color:var(--bull); } .down{ color:var(--bear); }
   .chartbox{ border:1px solid var(--line); border-radius:12px; overflow-x:auto; overflow-y:hidden;
@@ -200,8 +207,10 @@ function render(d){
      + `${Math.abs(L.breadth).toFixed(1)} 个百分点。落后越多，说明这波涨得越集中在少数巨头身上。`
      + `${X.breadth_since} 以来第 ${X.breadth_rank_n} 窄；最窄的一次是 ${X.breadth_record?.[0]}（${X.breadth_record?.[1]}），`
      + `正是科网泡沫顶部。`],
-  ].map(([k,v,n,tip])=>`<div class="card" title="${(tip||'').replace(/"/g,'&quot;')}">`
+  ].map(([k,v,n,tip])=>`<div class="card"${tip?` data-tip="${tip.replace(/"/g,'&quot;')}"`:''}>`
+      + (tip?`<span class="i">i</span>`:'')
       + `<div class="k">${k}</div><div class="v">${v}</div><div class="n">${n}</div></div>`).join('');
+  bindCardTips();
 
   drawChart(d);
   drawTable(d);
@@ -513,6 +522,34 @@ function bindChart(){
   const reset = ()=>{ CH.view = null; drawChart(CH.d); hide(); };
   svg.addEventListener('dblclick', reset);
   document.getElementById('reset').addEventListener('click', reset);
+}
+
+// ============ 卡片详解：即时悬停 / 手机点按 ============
+// 原本用的是原生 title（光标变问号、要等一秒才弹、手机上根本没有），改成跟图表同一套提示框。
+function bindCardTips(){
+  const tip = document.getElementById('tip');
+  const place = e => {
+    const tw = tip.offsetWidth, left = e.clientX + 16;
+    tip.style.left = (left + tw > window.innerWidth - 8 ? Math.max(8, e.clientX - tw - 16) : left) + 'px';
+    tip.style.top = Math.max(8, Math.min(window.innerHeight - tip.offsetHeight - 8, e.clientY + 14)) + 'px';
+  };
+  document.querySelectorAll('.card[data-tip]').forEach(card=>{
+    const show = e => { tip.innerHTML = card.dataset.tip; tip.style.display='block'; place(e); };
+    card.addEventListener('mouseenter', show);
+    card.addEventListener('mousemove', e=>{ if(tip.style.display==='block') place(e); });
+    card.addEventListener('mouseleave', ()=>{ tip.style.display='none'; });
+    // 手机没有 hover：点一下展开，再点或点别处收起
+    card.addEventListener('click', e=>{
+      if(tip.style.display==='block' && tip.dataset.from===card.dataset.tip){
+        tip.style.display='none'; return;
+      }
+      tip.dataset.from = card.dataset.tip;
+      show(e.touches ? e.touches[0] : e);
+    });
+  });
+  document.addEventListener('click', e=>{
+    if(!e.target.closest('.card[data-tip]')) tip.style.display='none';
+  });
 }
 
 // ============ 明细表 ============
