@@ -6,96 +6,162 @@
 <title>市场周期看板</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Ctext y='26' font-size='26'%3E%F0%9F%93%88%3C/text%3E%3C/svg%3E">
 <style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500;700&display=swap');
+
+  /* KELA FUND 同款设计语言：#06060a 深底 + 玻璃卡片 + 蓝紫绿点缀 + Inter/JetBrains Mono */
   :root{
-    --bg:#ffffff; --fg:#1a1d21; --muted:#6b7280; --line:#e5e7eb; --card:#f9fafb;
-    --bull:#2f9e5f; --bear:#d94a4a; --accent:#2563eb;
+    --bg:#06060a; --fg:#c8c8d0; --muted:#6b6b78; --dim:#555;
+    --line:rgba(255,255,255,0.08); --card:rgba(255,255,255,0.03);
+    --bull:#4ecb71; --bear:#ff6b6b; --accent:#4a9eff; --purple:#a855f7;
   }
-  @media (prefers-color-scheme: dark){
-    :root{ --bg:#14171a; --fg:#e8eaed; --muted:#9aa3ad; --line:#2a2f36; --card:#1b1f24; }
-  }
-  *{ box-sizing:border-box; }
+  *{ box-sizing:border-box; margin:0; padding:0; }
   body{
-    margin:0; background:var(--bg); color:var(--fg);
-    font:15px/1.65 -apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;
+    background:var(--bg); color:var(--fg); min-height:100vh; overflow-x:hidden;
+    font:15px/1.65 'Inter',-apple-system,BlinkMacSystemFont,"PingFang SC","Helvetica Neue",Arial,sans-serif;
   }
-  .wrap{ max-width:1180px; margin:0 auto; padding:28px 18px 60px; }
-  h1{ font-size:23px; margin:0 0 6px; letter-spacing:-.2px; }
-  .sub{ color:var(--muted); font-size:13px; margin-bottom:22px; }
-  #pb-now{ border:1px solid var(--line); border-radius:10px; padding:14px 16px;
-           background:var(--card); margin-bottom:12px; }
-  #pb-now .big{ font-size:19px; font-weight:600; }
+  .mono{ font-family:'JetBrains Mono',monospace; }
+
+  /* Aurora 背景（kela 同款） */
+  .aurora{ position:fixed; top:-50%; left:-50%; width:200%; height:200%; z-index:0; pointer-events:none; }
+  .aurora .blob{ position:absolute; border-radius:50%; filter:blur(80px); opacity:1; }
+  .aurora .b1{ width:600px; height:600px; top:10%; left:15%; background:rgba(74,158,255,0.06);
+               animation:auroraFloat1 15s ease-in-out infinite alternate; }
+  .aurora .b2{ width:500px; height:500px; top:50%; right:10%; background:rgba(168,85,247,0.05);
+               animation:auroraFloat2 18s ease-in-out infinite alternate; }
+  .aurora .b3{ width:400px; height:400px; bottom:10%; left:40%; background:rgba(78,203,113,0.04);
+               animation:auroraFloat3 12s ease-in-out infinite alternate; }
+  @keyframes auroraFloat1{ 0%{transform:translate(0,0) scale(1)} 100%{transform:translate(50px,-30px) scale(1.15)} }
+  @keyframes auroraFloat2{ 0%{transform:translate(0,0) scale(1)} 100%{transform:translate(-40px,40px) scale(1.1)} }
+  @keyframes auroraFloat3{ 0%{transform:translate(0,0) scale(1)} 100%{transform:translate(30px,-50px) scale(1.2)} }
+
+  .wrap{ max-width:1180px; margin:0 auto; padding:36px 20px 60px; position:relative; z-index:1; }
+
+  /* Header：kela 的居中 logo + 渐变大标题 */
+  .header{ text-align:center; margin-bottom:34px; }
+  .header .logo{ font-size:11px; letter-spacing:5px; text-transform:uppercase;
+                 color:var(--accent); font-weight:600; }
+  h1{ font-size:32px; font-weight:800; color:#fff; margin:8px 0 8px; letter-spacing:.5px;
+      background:linear-gradient(135deg,#fff 0%,#4a9eff 60%,#a855f7 100%);
+      -webkit-background-clip:text; background-clip:text; -webkit-text-fill-color:transparent; }
+  .sub{ color:var(--dim); font-size:13px; max-width:720px; margin:0 auto; }
+
+  /* Glass card（kela 同款质感） */
+  .glass{ background:var(--card); border:1px solid rgba(255,255,255,0.06); border-radius:16px;
+          backdrop-filter:blur(8px); transition:all .3s; }
+  .glass:hover{ border-color:rgba(255,255,255,0.12); background:rgba(255,255,255,0.05); }
+
+  #pb-now{ background:var(--card); border:1px solid rgba(74,158,255,0.15); border-radius:16px;
+           padding:18px 22px; margin-bottom:14px; backdrop-filter:blur(8px); }
+  #pb-now .big{ font-size:19px; font-weight:700; color:#fff; }
   #pb-tiers td.act{ color:var(--muted); }
-  #pb-tiers tr.on{ background:rgba(37,99,235,.08); }
-  #pb-tiers tr.on td{ font-weight:600; }
-  #pb-tiers tr.done td{ color:var(--muted); }
-  #freshness{ font-size:12.5px; border:1px solid var(--line); background:var(--card);
-              border-radius:8px; padding:9px 13px; margin-bottom:14px; color:var(--muted); }
+  #pb-tiers tr.on{ background:rgba(74,158,255,.08); }
+  #pb-tiers tr.on td{ font-weight:600; color:#fff; }
+  #pb-tiers tr.done td{ color:var(--dim); }
+
+  #freshness{ font-size:12px; border:1px solid rgba(255,255,255,0.06); background:var(--card);
+              border-radius:12px; padding:10px 16px; margin-bottom:16px; color:var(--muted);
+              backdrop-filter:blur(8px); font-family:'JetBrains Mono',monospace; }
   #freshness b{ color:var(--fg); font-weight:600; }
-  #freshness.stale{ border-color:var(--bear); color:var(--bear); }
+  #freshness.stale{ border-color:rgba(255,107,107,0.4); color:var(--bear); }
   #freshness.stale b{ color:var(--bear); }
-  .cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(150px,1fr)); gap:10px; margin-bottom:22px; }
-  .card{ background:var(--card); border:1px solid var(--line); border-radius:10px; padding:12px 14px; }
-  .card .k{ font-size:12px; color:var(--muted); margin-bottom:4px; }
-  .card .v{ font-size:21px; font-weight:600; letter-spacing:-.3px; }
-  .card .n{ font-size:11px; color:var(--muted); margin-top:4px; line-height:1.5; }
-  .card{ position:relative; }
+
+  .cards{ display:grid; grid-template-columns:repeat(auto-fit,minmax(160px,1fr)); gap:14px; margin-bottom:26px; }
+  .card{ position:relative; background:var(--card); border:1px solid rgba(255,255,255,0.06);
+         border-radius:16px; padding:18px 16px; backdrop-filter:blur(8px);
+         transition:all .3s; overflow:hidden; }
+  .card::before{ content:''; position:absolute; top:0; left:0; right:0; height:2px;
+                 background:linear-gradient(90deg,transparent,var(--accent),transparent);
+                 opacity:0; transition:opacity .3s; }
+  .card:hover{ border-color:rgba(255,255,255,0.12); background:rgba(255,255,255,0.05);
+               transform:translateY(-1px); box-shadow:0 8px 32px rgba(0,0,0,0.3); }
+  .card:hover::before{ opacity:1; }
+  .card .k{ font-size:10px; color:var(--dim); margin-bottom:6px; text-transform:uppercase;
+            letter-spacing:2px; font-weight:600; }
+  .card .v{ font-size:24px; font-weight:800; color:#fff; letter-spacing:-.3px;
+            font-family:'JetBrains Mono','Inter',"PingFang SC",monospace; }
+  .card .n{ font-size:11px; color:var(--muted); margin-top:6px; line-height:1.55; }
   .card[data-tip]{ cursor:pointer; }
-  .card[data-tip]:hover{ border-color:var(--accent); }
+  .card[data-tip]:hover{ border-color:rgba(74,158,255,0.35); }
   /* 用一个明确的 ⓘ 标记表示"这里有详解"，而不是把光标变成问号（那样没人看得懂） */
-  .card .i{ position:absolute; top:9px; right:10px; width:14px; height:14px; line-height:13px;
+  .card .i{ position:absolute; top:11px; right:12px; width:14px; height:14px; line-height:13px;
             text-align:center; border:1px solid var(--muted); border-radius:50%;
             font-size:9px; color:var(--muted); opacity:.55; }
   .card[data-tip]:hover .i{ opacity:1; border-color:var(--accent); color:var(--accent); }
   .m2{ color:var(--muted); }
   .up{ color:var(--bull); } .down{ color:var(--bear); }
+
   .legend{ display:flex; align-items:center; gap:12px; flex-wrap:wrap;
-           font-size:12px; color:var(--muted); margin:0 2px 8px; }
+           font-size:12px; color:var(--muted); margin:0 2px 10px; }
   .legend .lg{ display:inline-flex; align-items:center; gap:5px; }
   .legend .sw{ width:11px; height:11px; border-radius:2px; display:inline-block; }
   .legend .lgsep{ width:1px; height:13px; background:var(--line); }
   .capebar{ position:relative; width:170px; height:11px; border-radius:3px;
             display:inline-block; border:1px solid var(--line); }
-  .capebar i{ position:absolute; top:-4px; width:2px; height:19px; background:var(--fg);
-              border-radius:1px; box-shadow:0 0 0 1.5px var(--card); }
-  .chartbox{ border:1px solid var(--line); border-radius:12px; overflow-x:auto; overflow-y:hidden;
-             background:var(--card); -webkit-overflow-scrolling:touch; position:relative; }
+  .capebar i{ position:absolute; top:-4px; width:2px; height:19px; background:#fff;
+              border-radius:1px; box-shadow:0 0 0 1.5px rgba(0,0,0,0.6); }
+
+  .chartbox{ border:1px solid rgba(255,255,255,0.06); border-radius:16px; overflow-x:auto; overflow-y:hidden;
+             background:var(--card); backdrop-filter:blur(8px);
+             -webkit-overflow-scrolling:touch; position:relative; }
   /* 🔴 touch-action 必须允许横向：实测 pan-y 会让手机完全滑不动，
      只看得见 1961-1981 那 32.6%，当前这轮牛市根本看不到 */
   .chartbox svg{ display:block; min-width:1080px; touch-action:pan-x pan-y; }
   /* 桌面上不强制最小宽度：整张图完整显示，才能拉框放大（手机保留横向滚动） */
   @media (min-width:1000px){ .chartbox svg{ min-width:0; width:100%; } }
-  .hint{ font-size:12px; color:var(--muted); margin:8px 2px 26px;
+  .hint{ font-size:12px; color:var(--muted); margin:10px 2px 30px;
          display:flex; gap:10px; align-items:center; flex-wrap:wrap; }
-  #reset{ display:none; cursor:pointer; color:var(--accent); background:none;
-          border:1px solid var(--line); border-radius:6px; padding:3px 10px;
-          font-size:12px; font-family:inherit; }
-  #reset:hover{ border-color:var(--accent); }
+  #reset{ display:none; cursor:pointer; color:var(--accent); background:rgba(255,255,255,0.03);
+          border:1px solid rgba(255,255,255,0.08); border-radius:8px; padding:4px 12px;
+          font-size:12px; font-family:inherit; transition:all .3s; }
+  #reset:hover{ border-color:rgba(74,158,255,0.4); box-shadow:0 0 20px rgba(74,158,255,0.12); }
+
   #tip{ position:fixed; pointer-events:none; display:none; z-index:9;
-        background:rgba(20,23,26,.95); color:#e8eaed; border-radius:8px;
-        padding:9px 11px; font-size:12px; line-height:1.6; max-width:260px;
-        box-shadow:0 6px 22px rgba(0,0,0,.28); }
-  #tip b{ font-weight:600; }
-  #tip .g{ color:#7ddb9f; } #tip .r{ color:#ff8d8d; } #tip .m{ color:#9aa3ad; }
-  h2{ font-size:16px; margin:30px 0 10px; }
-  .note{ background:var(--card); border:1px solid var(--line); border-left:3px solid var(--accent);
-         border-radius:8px; padding:13px 15px; margin-bottom:12px; }
-  .note b{ font-weight:600; }
+        background:rgba(10,10,16,.92); color:#e8eaed; border-radius:10px;
+        border:1px solid rgba(255,255,255,0.1); backdrop-filter:blur(12px);
+        padding:10px 12px; font-size:12px; line-height:1.6; max-width:260px;
+        box-shadow:0 8px 32px rgba(0,0,0,.5); }
+  #tip b{ font-weight:600; color:#fff; }
+  #tip .g{ color:var(--bull); } #tip .r{ color:var(--bear); } #tip .m{ color:var(--muted); }
+
+  /* 小节标题：kela 策略页折叠条同款（白字 + 蓝色左竖线） */
+  h2{ font-size:18px; font-weight:700; color:#fff; letter-spacing:.5px;
+      margin:38px 0 14px; padding-left:12px;
+      border-left:3px solid rgba(74,158,255,0.75); line-height:1.4; }
+
+  .note{ background:var(--card); border:1px solid rgba(255,255,255,0.06);
+         border-left:3px solid var(--accent); backdrop-filter:blur(8px);
+         border-radius:12px; padding:15px 18px; margin-bottom:12px; }
+  .note b{ font-weight:600; color:#fff; }
   .note .warn{ color:var(--bear); font-weight:600; }
+
   table{ border-collapse:collapse; width:100%; font-size:13px; }
-  th,td{ text-align:left; padding:7px 9px; border-bottom:1px solid var(--line); }
-  th{ color:var(--muted); font-weight:500; }
-  code{ background:var(--card); padding:1px 5px; border-radius:4px; font-size:12px; }
-  footer{ margin-top:34px; padding-top:16px; border-top:1px solid var(--line);
-          font-size:12px; color:var(--muted); }
-  a{ color:var(--accent); }
+  th,td{ text-align:left; padding:9px 11px; border-bottom:1px solid rgba(255,255,255,0.05); }
+  th{ color:var(--dim); font-weight:600; font-size:10px; text-transform:uppercase; letter-spacing:2px; }
+  td{ color:var(--fg); }
+  code{ background:rgba(255,255,255,0.05); padding:1px 6px; border-radius:4px; font-size:12px;
+        font-family:'JetBrains Mono',monospace; }
+  footer{ margin-top:38px; padding-top:18px; border-top:1px solid rgba(255,255,255,0.06);
+          font-size:12px; color:var(--dim); }
+  a{ color:var(--accent); text-decoration:none; }
+  a:hover{ text-decoration:underline; }
+
+  @media (max-width:768px){
+    h1{ font-size:24px; }
+    .wrap{ padding:24px 14px 48px; }
+    .card .v{ font-size:20px; }
+  }
 </style>
 </head>
 <body>
+<div class="aurora"><div class="blob b1"></div><div class="blob b2"></div><div class="blob b3"></div></div>
 <div class="wrap">
-  <h1>市场周期看板</h1>
-  <div class="sub">
-    标普 500 的牛熊周期 · 估值冷热 · 市场宽度 ——
-    参考 Fidelity「Market Cycles」的结构，全部改用公开数据自建口径（<a href="#method">口径说明</a>）
+  <div class="header">
+    <div class="logo">S&amp;P 500 · Market Cycles</div>
+    <h1>市场周期看板</h1>
+    <div class="sub">
+      标普 500 的牛熊周期 · 估值冷热 · 市场宽度 ——
+      参考 Fidelity「Market Cycles」的结构，全部改用公开数据自建口径（<a href="#method">口径说明</a>）
+    </div>
   </div>
 
   <div id="freshness"></div>
@@ -414,11 +480,11 @@ const CSS = (name, fallback) => {
   return v || fallback;
 };
 const C = {
-  bull: CSS('--bull', '#2f9e5f'),
-  bear: CSS('--bear', '#d94a4a'),
-  line: CSS('--line', '#e5e7eb'),
-  muted: CSS('--muted', '#6b7280'),
-  accent: CSS('--accent', '#2563eb'),
+  bull: CSS('--bull', '#4ecb71'),
+  bear: CSS('--bear', '#ff6b6b'),
+  line: CSS('--line', 'rgba(255,255,255,0.08)'),
+  muted: CSS('--muted', '#6b6b78'),
+  accent: CSS('--accent', '#4a9eff'),
 };
 
 // ============ 主图 ============
@@ -481,12 +547,13 @@ function drawChart(d){
   // 但分母沿用截至 earnLatest 的盈利窗口 —— 与 Shiller/multpl 的标准做法一致，用斜纹标出。
   const earnLatest = d.meta.sources.earnings.latest;
   el.push(`<defs><pattern id="nodata" width="7" height="7" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">`
-        + `<line x1="0" y1="0" x2="0" y2="7" stroke="#ffffff" stroke-width="3" opacity="0.5"/></pattern></defs>`);
+        + `<line x1="0" y1="0" x2="0" y2="7" stroke="#ffffff" stroke-width="3" opacity="0.16"/></pattern></defs>`);
 
   const capeColor = v => {
     const p = pct(v);                        // 0=最便宜 1=最贵
     const r = Math.round(70 + 175*p), g = Math.round(110 - 40*Math.abs(p-0.5)*2), b = Math.round(245 - 185*p);
-    return { fill:`rgb(${r},${g},${b})`, alpha: 0.10 + 0.26*Math.abs(p-0.5)*2 };
+    // 深底(#06060a)上饱和色反而更显，透明度压低（白底版是 0.10 + 0.26），保持水彩感、别抢柱子
+    return { fill:`rgb(${r},${g},${b})`, alpha: 0.07 + 0.17*Math.abs(p-0.5)*2 };
   };
 
   months.forEach((m,i)=>{
@@ -717,9 +784,10 @@ function drawCapeLegend(d, capeColor, pct, vals){
   for(let i=0; i<=10; i++){
     const v = vals[Math.min(vals.length-1, Math.round(i/10*(vals.length-1)))];
     const c = capeColor(v);
-    // 图上色块是半透明叠在白底上的，图例这里换算成等效实色，看起来才一致
+    // 图上色块是半透明叠在深底(#06060a)上的，图例这里换算成等效实色，看起来才一致
     const rgb = c.fill.match(/\d+/g).map(Number);
-    const mix = rgb.map(x=>Math.round(255 + (x-255)*c.alpha/0.36*0.9));
+    const base = [6,6,10];
+    const mix = rgb.map((x,j)=>Math.round(base[j] + (x-base[j])*c.alpha/0.24*0.9));
     stops.push(`rgb(${mix.join(',')}) ${i*10}%`);
   }
   bar.style.background = `linear-gradient(90deg, ${stops.join(',')})`;
