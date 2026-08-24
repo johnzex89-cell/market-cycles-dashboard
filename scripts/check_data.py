@@ -259,7 +259,10 @@ def main() -> int:
         ath = pb.get("ath")
         check(isinstance(ath, (int, float)) and ath > 0, "playbook.ath 缺失或非正数")
         if ath:
-            check(abs(ath - max(v for _, v in d["price"])) < 1e-6,
+            # build.py 写的是 round(ath, 1)（页面按 1 位小数展示），所以容差必须 ≥0.05，
+            # 不能用 1e-6 要求精确相等 —— 只要历史最高点那个月的价格带两位小数（如 7741.36），
+            # 自检就永远不过、自动更新永远推不上线。260818–260823 连挂 6 天就是这条。
+            check(abs(ath - max(v for _, v in d["price"])) < 0.05,
                   f"playbook.ath={ath} 与价格序列的最高点不一致")
             for t in pb.get("tiers", []):
                 want = ath * (1 - t["drop_pct"] / 100)
