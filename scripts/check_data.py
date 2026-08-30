@@ -189,6 +189,19 @@ def main() -> int:
               f"各数据源新旧落差 {spread} 个月（{oldest_k}={src_latest[oldest_k]} vs "
               f"{newest_k}={src_latest[newest_k]}），超过 {MAX_SOURCE_SPREAD_MONTHS} ⟹ 疑似新旧混用")
 
+    # 「数据截至」显示到日靠 price.latest_date —— 它必须真的落在最新月里、且不能是未来日期，
+    # 否则页面会显示一个看着精确、其实指向别的月/明天的日期（比只显示月份更误导）。
+    # 旧 data.json 没这个字段 ⟹ 跳过（前端同样回退成只显示月份）。
+    p_date = sources.get("price", {}).get("latest_date")
+    if p_date is not None:
+        try:
+            pd_ = dt.date.fromisoformat(p_date)
+            check(p_date[:7] == latest["month"],
+                  f"price.latest_date {p_date} 不在最新月 {latest['month']} 内")
+            check(pd_ <= today, f"price.latest_date {p_date} 是未来日期（今天 {today}）")
+        except ValueError:
+            failures.append(f"price.latest_date 不是 YYYY-MM-DD 格式：{p_date!r}")
+
     b_latest = sources.get("breadth", {}).get("latest")
     if b_latest:
         b_age = (today - month_to_date(b_latest)).days

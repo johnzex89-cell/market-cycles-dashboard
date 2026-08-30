@@ -73,11 +73,14 @@ def http_get(url: str) -> bytes:
     raise RuntimeError(f"{url} 重试 {RETRY_COUNT} 次仍失败: {last_err}")
 
 
-def parse_multpl(html: str) -> list[list]:
-    """把 multpl 的月度表解析成 [["YYYY-MM", value], ...]，按时间正序。
+def parse_multpl(html: str) -> tuple[list[list], str | None]:
+    """把 multpl 的月度表解析成 ([["YYYY-MM", value], ...], 最新一行的精确日期)，按时间正序。
 
-    multpl 表格第一行往往是"当前值"（如 Aug 14, 2026），日期不是月初；
+    multpl 表格第一行往往是"当前值"（如 Aug 28, 2026），日期不是月初；
     这里按年月归一，同一个年月以**更晚的日期**为准（即当月最新快照覆盖月初值）。
+    🔴 第二个返回值 = **最新那个年月实际对应的日期**（ISO），页面用它把"数据截至"显示到日。
+       历史行的日期是名义月初（Jul 1 / Jun 1…），只有最新行带真实快照日 ⟹ 这个日期只对
+       最新月有意义，别拿它去推别的月。拿不到就返回 None，前端回退成只显示月份。
     """
     rows: dict[str, tuple[dt.date, float]] = {}
     for date_str, val_str in MULTPL_ROW_RE.findall(html):
@@ -86,7 +89,9 @@ def parse_multpl(html: str) -> list[list]:
         value = float(val_str.replace(",", ""))
         if key not in rows or d > rows[key][0]:
             rows[key] = (d, value)
-    return [[k, v] for k, (_, v) in sorted(rows.items())]
+    ordered = sorted(rows.items())
+    latest_date = ordered[-1][1][0].isoformat() if ordered else None
+    return [[k, v] for k, (_, v) in ordered], latest_date
 
 
 def snapshot(name: str, source_url: str, rows: list, extra: dict | None = None) -> None:
@@ -110,11 +115,11 @@ def snapshot(name: str, source_url: str, rows: list, extra: dict | None = None) 
 def fetch_multpl(name: str, slug: str) -> None:
     url = f"https://www.multpl.com/{slug}/table/by-month"
     html = http_get(url).decode("utf-8", "ignore")
-    rows = parse_multpl(html)
+    rows, latest_date = parse_multpl(html)
     if len(rows) < MULTPL_MIN_ROWS:
         raise RuntimeError(f"{slug} 只解析出 {len(rows)} 行（阈值 {MULTPL_MIN_ROWS}），"
                            f"页面结构可能已改版")
-    snapshot(name, url, rows)
+    snapshot(name, url, rows, extra={"latest_date": latest_date})
 
 
 def fetch_french() -> None:

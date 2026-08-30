@@ -317,6 +317,13 @@ fetch('data.json?t=' + Date.now()).then(r=>r.json()).then(render).catch(e=>{
 const H = v => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
                               .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
+// 股价的"数据截至"——**到日**。multpl 表最新一行带的是真实快照日（如 2026-08-28，
+// 即最近一个交易日），build.py 已把它写进 meta.sources.price.latest_date。
+// 🔴 只有股价这一层能到日：宽度（French Library）和盈利本身就是月度序列，硬写一个日子是编的。
+// 老 data.json 没有 latest_date（或抓取时没解析到）→ 回退成只显示月份，绝不自己拼一个日期。
+const priceAsOf = m => (m.sources && m.sources.price && m.sources.price.latest_date)
+                    || (m.sources && m.sources.price && m.sources.price.latest) || '—';
+
 function render(d){
   const m = d.meta, L = m.latest, P = m.params;
   document.getElementById('p-rev').textContent = P.reversal_pct + '%';
@@ -349,7 +356,7 @@ function render(d){
     fresh.className = stale ? 'stale' : '';
     fresh.innerHTML = (stale ? '⚠️ <b>数据可能已过期</b>：' : '')
       + `数据更新于 <b>${fmt(gen)}</b>（${ageTxt}）　·　下次自动更新 <b>${fmt(next)}</b>`
-      + `　·　各层数据截止：股价 <b>${H(m.sources.price.latest)}</b>、`
+      + `　·　各层数据截止：股价 <b>${H(priceAsOf(m))}</b>、`
       + `盈利 ${H(m.sources.earnings.latest)}、CPI ${H(m.sources.cpi?.latest ?? '—')}、`
       + `宽度 ${H(m.sources.breadth.latest)}`
       + (stale ? '　——超过 3 天没更新，自动更新可能已中断' : '');
@@ -361,9 +368,10 @@ function render(d){
   const chip = document.getElementById('asofChip');
   if(chip && m.sources){
     chip.hidden = false;
-    chip.innerHTML = `<b>数据截至 ${H(m.sources.price.latest)}</b>`
+    chip.innerHTML = `<b>数据截至 ${H(priceAsOf(m))}</b>`
       + `<span>宽度 ${H(m.sources.breadth.latest)} · 盈利 ${H(m.sources.earnings.latest)}</span>`;
-    chip.title = '股价（上层周期柱 + 背景估值带）更新到 ' + m.sources.price.latest
+    chip.title = '股价（上层周期柱 + 背景估值带）更新到 ' + priceAsOf(m)
+               + '（multpl 最新一行的日期，即最近一个交易日）'
                + '；下层市场宽度更新到 ' + m.sources.breadth.latest
                + '；盈利定稿到 ' + m.sources.earnings.latest + '，之后的估值是初步值（图上斜纹段）';
   }
@@ -487,7 +495,7 @@ function render(d){
 
   document.getElementById('footer').innerHTML =
     `数据更新：${m.generated_at.replace('T',' ').replace('+00:00',' UTC')}　·　`
-    + `价格与盈利 <a href="${m.sources.price.url}" target="_blank">multpl</a>（价格至 ${m.sources.price.latest}、`
+    + `价格与盈利 <a href="${m.sources.price.url}" target="_blank">multpl</a>（价格至 ${priceAsOf(m)}、`
     + `盈利至 ${m.sources.earnings.latest}）　·　`
     + `宽度 <a href="${m.sources.breadth.url}" target="_blank">Kenneth French Data Library</a>`
     + `（至 ${m.sources.breadth.latest}，CRSP ${m.sources.breadth.crsp_version}）<br>`

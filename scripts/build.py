@@ -484,7 +484,10 @@ def main() -> int:
             "chart_start": CHART_START,
         },
         "sources": {
+            # latest_date = multpl 最新行的真实日期（如 2026-08-28），页面「数据截至」显示到日。
+            # 旧快照没这个字段 → None，前端自动回退成只显示月份。
             "price": {"url": price_snap["source_url"], "latest": months[-1],
+                      "latest_date": price_snap.get("latest_date"),
                       "fetched_at": price_snap["fetched_at"]},
             "earnings": {"url": earn_snap["source_url"], "latest": max(earnings)},
             "cpi": {"url": cpi_snap["source_url"], "latest": max(cpi)},
