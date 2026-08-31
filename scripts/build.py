@@ -62,6 +62,15 @@ def load(name: str) -> dict:
         return json.load(f)
 
 
+def load_optional(name: str) -> dict | None:
+    """快照不存在就返回 None（新加的数据源，老工作树/老 CI 缓存里可能还没有）。"""
+    path = os.path.join(DATA_DIR, f"{name}.json")
+    if not os.path.exists(path):
+        return None
+    with open(path, encoding="utf-8") as f:
+        return json.load(f)
+
+
 def to_map(snapshot: dict) -> dict[str, float]:
     return {ym: v for ym, v in snapshot["rows"]}
 
@@ -366,6 +375,24 @@ def main() -> int:
     earnings = to_map(earn_snap)
     cpi = to_map(cpi_snap)
 
+    # —— 当月那个点改用官方源的最新收盘（ZC 260831 拍板）——
+    # multpl 的历史行 = 当月每日收盘均值（可信：25 个完整月里 23 个与官方日均差 0.000%），
+    # 但它的**当月行**是自家"现价"，260831 实测 7778.94，而 FRED 与 Yahoo 双源一致给 7711.76
+    # （高 0.87%，且高过当天最高价 7771.48 ⟹ 不可能是真实成交价）。
+    # ⚠️ 代价：最后一个点是**单日收盘**、前面是**当月日均**，口径不同 —— 页面上必须写明（已写）。
+    # 🔴 FRED 快照缺失 / 比 multpl 还旧时**一律不替换**，退回 multpl，绝不猜一个值。
+    price_latest_date = price_snap.get("latest_date")
+    price_latest_source = "multpl"
+    fred_snap = load_optional("sp500_daily_fred")
+    fred_latest = None
+    if fred_snap and fred_snap.get("rows"):
+        f_day, f_close = fred_snap["rows"][-1]
+        fred_latest = (f_day, f_close)
+        if f_day[:7] >= max(price):          # FRED 已进到 multpl 的最新月（或更新的月）
+            price[f_day[:7]] = round(float(f_close), 2)
+            price_latest_date = f_day
+            price_latest_source = "fred"
+
     months = sorted(price)
     prices = [price[m] for m in months]
 
@@ -487,8 +514,15 @@ def main() -> int:
             # latest_date = multpl 最新行的真实日期（如 2026-08-28），页面「数据截至」显示到日。
             # 旧快照没这个字段 → None，前端自动回退成只显示月份。
             "price": {"url": price_snap["source_url"], "latest": months[-1],
-                      "latest_date": price_snap.get("latest_date"),
+                      "latest_date": price_latest_date,
+                      # multpl=当月日均口径；fred=当月点已换成官方单日收盘（前端据此写口径说明）
+                      "latest_source": price_latest_source,
                       "fetched_at": price_snap["fetched_at"]},
+            "price_daily": ({"url": fred_snap["source_url"],
+                             "latest_date": fred_latest[0],
+                             "latest_close": round(float(fred_latest[1]), 2),
+                             "fetched_at": fred_snap["fetched_at"]}
+                            if fred_snap and fred_latest else None),
             "earnings": {"url": earn_snap["source_url"], "latest": max(earnings)},
             "cpi": {"url": cpi_snap["source_url"], "latest": max(cpi)},
             "breadth_calibration": {

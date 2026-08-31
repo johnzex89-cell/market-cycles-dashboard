@@ -44,6 +44,10 @@ MULTPL_ROW_RE = re.compile(
 
 # 每个 multpl 表最少该有多少行，低于这个数说明页面结构变了或被拦了
 MULTPL_MIN_ROWS = 1000
+# FRED（美联储经济数据库，S&P 官方授权）的 S&P 500 每日收盘。近 10 年 ≈ 2500 个交易日。
+FRED_SP500_URL = "https://fred.stlouisfed.org/graph/fredgraph.csv?id=SP500"
+FRED_UA = "market-cycles-dashboard/0.1 (+https://github.com/johnzex89-cell/market-cycles-dashboard)"
+FRED_MIN_ROWS = 500
 FRENCH_MIN_BYTES = 100_000
 
 
@@ -56,12 +60,12 @@ def log(msg: str, kind: str = "INFO") -> None:
         f.write(line + "\n")
 
 
-def http_get(url: str) -> bytes:
+def http_get(url: str, ua: str | None = None) -> bytes:
     """带重试的 GET。瞬态失败退避重试，最终失败抛异常交给上层决定要不要保旧快照。"""
     last_err: Exception | None = None
     for attempt in range(1, RETRY_COUNT + 1):
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": UA})
+            req = urllib.request.Request(url, headers={"User-Agent": ua or UA})
             with urllib.request.urlopen(req, timeout=TIMEOUT_SEC) as r:
                 return r.read()
         except Exception as e:  # noqa: BLE001 - 网络层什么都可能抛
@@ -120,6 +124,42 @@ def fetch_multpl(name: str, slug: str) -> None:
         raise RuntimeError(f"{slug} 只解析出 {len(rows)} 行（阈值 {MULTPL_MIN_ROWS}），"
                            f"页面结构可能已改版")
     snapshot(name, url, rows, extra={"latest_date": latest_date})
+
+
+def fetch_fred_sp500() -> None:
+    """FRED 的 S&P 500 每日收盘 —— 只用来给「当月那个点」一个可交叉验证的官方值。
+
+    🔴 为什么要引第二个源（260831 实测，不是猜的）：
+      · multpl 月度表的**历史行**口径 = 当月每日收盘的平均值（Shiller 传统）。
+        拿 Yahoo 日线逐月复算，25 个完整月里 23 个偏差 **0.000%** ⟹ 历史数据可信，继续用它。
+      · 但它的**当月行**是 multpl 自己的"现价"，实测 2026-08-28 报 7778.94，
+        而 FRED 与 Yahoo 两个独立源都是 **7711.76**（高 0.87%），
+        且 7778.94 比当天最高价 7771.48 还高 ⟹ **不可能是真实成交价**。
+      · ZC 260831 拍板：当月点改用官方源的最新收盘。
+    ⚠️ 代价（页面上已写明）：最后一个点是**单日收盘**，前面所有点是**当月日均**，两者口径不同。
+    """
+    # 🔴 FRED 必须用**声明身份的短 UA**：拿本文件默认那串伪装 Chrome 的 UA 去请求，
+    #    FRED 不返回也不报错，直接把连接挂住到超时（260831 实测复现 4/4 次，
+    #    换 `market-cycles-dashboard/0.1` 立刻 9 秒拿到 48941 字节）。跟 EDGAR 一个脾气。
+    csv_text = http_get(FRED_SP500_URL, ua=FRED_UA).decode("utf-8", "ignore")
+    rows: list[list] = []
+    for line in csv_text.splitlines()[1:]:      # 跳过表头
+        parts = line.split(",")
+        if len(parts) < 2:
+            continue
+        day, val = parts[0].strip(), parts[1].strip()
+        if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day) or val in ("", "."):
+            continue                            # FRED 用 "." 表示休市日
+        try:
+            rows.append([day, float(val)])
+        except ValueError:
+            continue
+    rows.sort()
+    if len(rows) < FRED_MIN_ROWS:
+        raise RuntimeError(f"FRED SP500 只解析出 {len(rows)} 行（阈值 {FRED_MIN_ROWS}），"
+                           f"CSV 结构可能已改版")
+    snapshot("sp500_daily_fred", FRED_SP500_URL, rows,
+             extra={"latest_date": rows[-1][0], "latest_close": rows[-1][1]})
 
 
 def fetch_french() -> None:
@@ -238,6 +278,7 @@ def _split_french_sections(text: str) -> dict[str, tuple[list[str], list[list]]]
 # name → 抓取函数。任何一个失败都不影响其余的继续跑。
 SOURCES: list[tuple[str, Callable[[], None]]] = [
     ("标普月度价格", lambda: fetch_multpl("sp500_price", "s-p-500-historical-prices")),
+    ("标普每日收盘（FRED，给当月点用）", fetch_fred_sp500),
     ("标普月度盈利", lambda: fetch_multpl("sp500_earnings", "s-p-500-earnings")),
     ("CPI", lambda: fetch_multpl("cpi", "cpi")),
     ("Shiller CAPE10（交叉验证用）", lambda: fetch_multpl("cape10_reference", "shiller-pe")),

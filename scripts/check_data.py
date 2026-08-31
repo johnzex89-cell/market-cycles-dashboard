@@ -202,6 +202,23 @@ def main() -> int:
         except ValueError:
             failures.append(f"price.latest_date 不是 YYYY-MM-DD 格式：{p_date!r}")
 
+    # 当月点声称换成官方收盘（latest_source=fred）时，必须**真的换了**。
+    # 🔴 光看一个标记字段等于恒真守卫：标记写 fred、值还是 multpl 的，页面照样显示错的数。
+    #    所以这里比的是**值本身**——最新价、价格序列末点、日期，三者都要跟 FRED 快照对上。
+    p_src = sources.get("price", {}).get("latest_source")
+    if p_src == "fred":
+        pd_src = sources.get("price_daily")
+        if not pd_src:
+            failures.append("latest_source=fred 但 meta.sources.price_daily 缺失")
+        else:
+            fc, fd = pd_src.get("latest_close"), pd_src.get("latest_date")
+            check(latest["price"] == fc,
+                  f"latest_source=fred，但 latest.price {latest['price']} ≠ FRED 收盘 {fc}")
+            check(d["price"][-1][1] == fc,
+                  f"latest_source=fred，但价格序列末点 {d['price'][-1]} ≠ FRED 收盘 {fc}")
+            check(p_date == fd,
+                  f"latest_source=fred，但 price.latest_date {p_date} ≠ FRED 日期 {fd}")
+
     b_latest = sources.get("breadth", {}).get("latest")
     if b_latest:
         b_age = (today - month_to_date(b_latest)).days

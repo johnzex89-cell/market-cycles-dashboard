@@ -317,12 +317,19 @@ fetch('data.json?t=' + Date.now()).then(r=>r.json()).then(render).catch(e=>{
 const H = v => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
                               .replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
 
-// 股价的"数据截至"——**到日**。multpl 表最新一行带的是真实快照日（如 2026-08-28，
-// 即最近一个交易日），build.py 已把它写进 meta.sources.price.latest_date。
+// 股价的"数据截至"——**到日**：meta.sources.price.latest_date，由 build.py 写入。
+// 260831 起它是 **FRED 最新交易日**（当月点已改用官方收盘）；FRED 缺失时回退成 multpl
+// 最新行的快照日，两种情况下它都是"最新那个点真正对应的那天"。
 // 🔴 只有股价这一层能到日：宽度（French Library）和盈利本身就是月度序列，硬写一个日子是编的。
-// 老 data.json 没有 latest_date（或抓取时没解析到）→ 回退成只显示月份，绝不自己拼一个日期。
+// 老 data.json 连 latest_date 都没有 → 回退成只显示月份，绝不自己拼一个日期。
 const priceAsOf = m => (m.sources && m.sources.price && m.sources.price.latest_date)
                     || (m.sources && m.sources.price && m.sources.price.latest) || '—';
+
+// 最新那个点是不是已经换成官方收盘（build.py 写的 latest_source）。
+// 🔴 换了就必须在页面上说明口径不同：最后一点＝**单日收盘**，它前面每一点＝**当月日均**。
+// 不说的话，图上最后那截的斜率会被当成跟历史同口径的东西去读。
+const priceIsOfficialClose = m => !!(m.sources && m.sources.price
+                                  && m.sources.price.latest_source === 'fred');
 
 function render(d){
   const m = d.meta, L = m.latest, P = m.params;
@@ -371,7 +378,9 @@ function render(d){
     chip.innerHTML = `<b>数据截至 ${H(priceAsOf(m))}</b>`
       + `<span>宽度 ${H(m.sources.breadth.latest)} · 盈利 ${H(m.sources.earnings.latest)}</span>`;
     chip.title = '股价（上层周期柱 + 背景估值带）更新到 ' + priceAsOf(m)
-               + '（multpl 最新一行的日期，即最近一个交易日）'
+               + (priceIsOfficialClose(m)
+                  ? '——最新这个点是该日的官方收盘价（FRED），更早的每个点是当月日均（multpl），两者口径不同'
+                  : '（multpl 最新一行的日期，即最近一个交易日）')
                + '；下层市场宽度更新到 ' + m.sources.breadth.latest
                + '；盈利定稿到 ' + m.sources.earnings.latest + '，之后的估值是初步值（图上斜纹段）';
   }
@@ -465,8 +474,12 @@ function render(d){
      + `${X.cycle_pct_rank>=67?'偏大':X.cycle_pct_rank<=33?'偏小':'中等'}水平。`],
 
     ['标普 500', L.price.toLocaleString('en-US',{maximumFractionDigits:0}),
-     `${L.month} · 月内均价`,
-     `${L.month} 当月的平均收盘点位。用月均价而非月末收盘，是数据源决定的（见下方说明）。`],
+     // 🔴 这张卡的副标题必须跟着数据口径走：当月点换成官方单日收盘后还写"月内均价"就是错的
+     priceIsOfficialClose(m) ? `${H(priceAsOf(m))} · 官方收盘` : `${L.month} · 月内均价`,
+     priceIsOfficialClose(m)
+       ? `${priceAsOf(m)} 的官方收盘点位（FRED）。⚠️ 只有最新这一个点是单日收盘，`
+         + `图上更早的每一点都是当月日均（multpl 口径）—— 两者口径不同，别拿最后一截的斜率跟历史直接比。`
+       : `${L.month} 当月的平均收盘点位。用月均价而非月末收盘，是数据源决定的（见下方说明）。`],
 
     ['估值 (5年 CAPE)', L.cape5 ?? '—',
      `${capeTop}<br>` + (X.cape_prev_record ? `前纪录 ${X.cape_prev_record[0]} 的 ${X.cape_prev_record[1]}` : ''),
@@ -495,8 +508,12 @@ function render(d){
 
   document.getElementById('footer').innerHTML =
     `数据更新：${m.generated_at.replace('T',' ').replace('+00:00',' UTC')}　·　`
-    + `价格与盈利 <a href="${m.sources.price.url}" target="_blank">multpl</a>（价格至 ${priceAsOf(m)}、`
-    + `盈利至 ${m.sources.earnings.latest}）　·　`
+    + `价格与盈利 <a href="${m.sources.price.url}" target="_blank">multpl</a>`
+    + `（月度价格＝当月日均，至 ${H(m.sources.price.latest)}、盈利至 ${H(m.sources.earnings.latest)}）　·　`
+    + (priceIsOfficialClose(m)
+        ? `当月点用 <a href="${m.sources.price_daily.url}" target="_blank">FRED</a> 官方收盘`
+          + `（${H(m.sources.price_daily.latest_date)}，单日收盘、与历史的月均口径不同）　·　`
+        : '')
     + `宽度 <a href="${m.sources.breadth.url}" target="_blank">Kenneth French Data Library</a>`
     + `（至 ${m.sources.breadth.latest}，CRSP ${m.sources.breadth.crsp_version}）<br>`
     + `本页为个人研究用途，非投资建议。指标口径均为自建，与 Fidelity 原图不等价。`;
