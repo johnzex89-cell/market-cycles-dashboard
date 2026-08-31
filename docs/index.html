@@ -389,51 +389,64 @@ function buildTrace(d){
     document.querySelectorAll('.trace-rev').forEach(el=>el.textContent = revTxt);
 
     // —— 重放（与 build.py find_cycles 逐行对应）——
+    // 幅度文案一律用**无符号幅度**比阈值："跌幅 11.1% ≥ 10%"。带符号写成
+    // "-11.1% ≥ 10%" 是数学错句（-11.1 < 10），260901 Codex 审出。
     const rows = [];          // {m, price, note, cls}
-    const turns = [];         // 每次确认转势时被追认的极值月
+    const segs = [];          // 重放出的完整段 {kind, start, end}（只含已确认段）
     const confirmAt = new Map(); // 极值月 → 在哪个月被确认
-    let rising = true, ext = 0;
-    const pctFrom = i => (prices[i]/prices[ext]-1)*100;
+    let rising = true, ext = 0, anchor = 0;
+    const mag = i => Math.abs(prices[i]/prices[ext]-1)*100;
     for(let i=1;i<months.length;i++){
-      const pc = pctFrom(i);
+      const a = mag(i).toFixed(1) + '%';
       let note='', cls='';
       if(rising){
         if(prices[i] > prices[ext]){ ext=i; note='新高 → 顶还没到，继续找'; }
         else if(prices[i] <= prices[ext]*(1-rev)){
-          note = `距最高点已跌 <span class="strong-bear">${F(pc)}</span> ≥ ${esc(revTxt)} ⟹ `
+          note = `跌幅 <span class="strong-bear">${esc(a)}</span> ≥ ${esc(revTxt)}（从最高点算）⟹ `
                + `<span class="strong-bear">确认转熊</span>；回头认定 <b>${esc(months[ext])}</b> 为顶`
                + `＝牛市终点＝熊市起点`;
           cls='turn-bear';
-          turns.push(months[ext]); confirmAt.set(months[ext], months[i]);
-          ext=i; rising=false;
+          segs.push({kind:'bull', start:months[anchor], end:months[ext]});
+          confirmAt.set(months[ext], months[i]);
+          anchor=ext; ext=i; rising=false;
         }
-        else note = `回调，距最高点 ${F(pc)}（不到 ${esc(revTxt)}）→ 仍算同一段牛市`;
+        else note = `回调 ${esc(a)}（从最高点算，不到 ${esc(revTxt)}）→ 仍算同一段牛市`;
       } else {
         if(prices[i] < prices[ext]){ ext=i; note='新低 → 底还没到，继续找'; }
         else if(prices[i] >= prices[ext]*(1+rev)){
-          note = `距最低点已涨 <span class="strong-bull">${F(pc)}</span> ≥ ${esc(revTxt)} ⟹ `
+          note = `涨幅 <span class="strong-bull">${esc(a)}</span> ≥ ${esc(revTxt)}（从最低点算）⟹ `
                + `<span class="strong-bull">确认转牛</span>；回头认定 <b>${esc(months[ext])}</b> 为底`
                + `＝熊市终点＝新牛市起点`;
           cls='turn-bull';
-          turns.push(months[ext]); confirmAt.set(months[ext], months[i]);
-          ext=i; rising=true;
+          segs.push({kind:'bear', start:months[anchor], end:months[ext]});
+          confirmAt.set(months[ext], months[i]);
+          anchor=ext; ext=i; rising=true;
         }
-        else note = `反弹，距最低点 ${F(pc)}（不到 ${esc(revTxt)}）→ 仍算同一段熊市`;
+        else note = `反弹 ${esc(a)}（从最低点算，不到 ${esc(revTxt)}）→ 仍算同一段熊市`;
       }
       rows.push({ m:months[i], price:prices[i], note, cls });
     }
 
-    // —— 自检：重放的转折点 == data.json 各段的 end（最后一段进行中，无 end 可比）——
-    const expected = d.cycles.slice(0,-1).map(c=>c.end);
-    if(turns.length !== expected.length || turns.some((t,i)=>t!==expected[i])){
-      console.warn('trace 重放与 data.json 分段不一致，逐月推演不显示', {turns, expected});
+    // —— 自检：重放出的段与 data.json 的段逐段比 kind/start/end ——
+    // 🔴 只比 end 不够（260901 Codex 审出）：改 cycles 里某段的 start 而不动 end 能绕过、
+    //    然后错的 start 被当成"顶"渲染出去。现在逐段比三个字段；且下方窗口/文案**全部改用
+    //    重放结果 segs**，cycles 只当交叉验证闸 —— 即使它被改了也进不了渲染路径。
+    // 唯一豁免：第一段的 start。cycles 是对全历史(1871 起)算的、其首段起点早于图表数据起点，
+    //    重放只能从图表起点开始，首段 start 天然对不上（当前实况：1960-10 vs 1961-01）。
+    const expected = d.cycles.slice(0,-1);   // 最后一段进行中，重放不 emit，不比
+    const segsMatch = segs.length === expected.length && segs.every((g,i) =>
+      g.kind === expected[i].kind && g.end === expected[i].end &&
+      (i === 0 || g.start === expected[i].start));
+    if(!segsMatch){
+      console.warn('trace 重放与 data.json 分段不一致，逐月推演不显示', {segs, expected});
       return;                                      // 保持 hidden
     }
 
     // —— 截窗口：最近一次已确认的熊（顶前 3 个月 → 确认转牛后 2 个月）——
-    const bears = d.cycles.filter(c=>c.kind==='bear' && c.confirmed);
-    if(!bears.length) return;
-    const bear = bears[bears.length-1];
+    // 🔴 从重放结果 segs 里取，不从 d.cycles 取（理由见上）
+    const bearSegs = segs.filter(g=>g.kind==='bear');
+    if(!bearSegs.length) return;
+    const bear = bearSegs[bearSegs.length-1];
     const peak = bear.start, bottom = bear.end;
     const cBull = confirmAt.get(bottom);
     if(!cBull) return;
@@ -450,7 +463,7 @@ function buildTrace(d){
       `以上每一行都是真实数据（multpl 月度价）。表里的顶 <b>${esc(peak)}</b>、底 <b>${esc(bottom)}</b> `
       + `正是图上最近那段红色的两端；图上最右那根绿柱的 0%，就落在 <b>${esc(bottom)}</b>。`
       + `页面加载时已在浏览器里把这套规则对全部历史重放了一遍，与图上 ${d.cycles.length} 段`
-      + `逐段核对一致后才显示本表 —— 对不上会宁可整块不显示。`;
+      + `的类型和起止月逐段核对一致后才显示本表 —— 对不上会宁可整块不显示。`;
     box.hidden = false;
   }catch(e){
     console.warn('trace 构建失败，逐月推演不显示', e);
