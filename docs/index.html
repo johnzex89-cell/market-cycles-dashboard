@@ -140,6 +140,28 @@
          border-radius:12px; padding:15px 18px; margin-bottom:12px; }
   .note b{ font-weight:600; color:#fff; }
   .note .warn{ color:var(--bear); font-weight:600; }
+  /* 「起点怎么定的」逐月推演：折叠块（表格太大放不进 hover 提示，且手机没有 hover）*/
+  #traceBox{ margin-top:12px; border:1px solid rgba(74,158,255,0.22); border-radius:12px;
+             background:rgba(74,158,255,0.05); }
+  #traceBox summary{ cursor:pointer; padding:10px 14px; font-size:13px; color:var(--accent);
+                     font-weight:600; list-style:none; user-select:none; }
+  #traceBox summary::-webkit-details-marker{ display:none; }
+  #traceBox summary::before{ content:'▸ '; }
+  #traceBox[open] summary::before{ content:'▾ '; }
+  #traceBox .trace-body{ padding:0 14px 12px; }
+  .trace-wrap{ overflow-x:auto; margin:10px 0; }
+  #traceTable{ border-collapse:collapse; font-size:12px; min-width:560px; width:100%; }
+  #traceTable th{ text-align:left; color:var(--dim); font-weight:600; padding:5px 10px;
+                  border-bottom:1px solid var(--line); white-space:nowrap; }
+  #traceTable td{ padding:5px 10px; border-bottom:1px solid rgba(255,255,255,0.04);
+                  vertical-align:top; }
+  #traceTable td.mo{ font-family:ui-monospace,Menlo,monospace; color:#fff; white-space:nowrap; }
+  #traceTable td.px{ font-family:ui-monospace,Menlo,monospace; color:var(--fg);
+                     text-align:right; white-space:nowrap; }
+  #traceTable tr.turn-bear td{ background:rgba(255,107,107,0.07); }
+  #traceTable tr.turn-bull td{ background:rgba(78,203,113,0.07); }
+  #traceTable td .strong-bear{ color:var(--bear); font-weight:600; }
+  #traceTable td .strong-bull{ color:var(--bull); font-weight:600; }
 
   table{ border-collapse:collapse; width:100%; font-size:13px; }
   th,td{ text-align:left; padding:9px 11px; border-bottom:1px solid rgba(255,255,255,0.05); }
@@ -263,6 +285,24 @@
     <span class="warn">与原图的差异：</span>原图那 18 段是 Fidelity 人工策展的（它的熊市里有 -15%、-14%、-10%，
     没有统一阈值），无法用公开算法还原。这里改用<b>可复算的规则</b>：月度价格反转
     <b id="p-rev">10%</b> 即确认转势，段幅度按峰到谷全程计。
+    <!-- 逐月推演默认 hidden：JS 在浏览器里重放一遍分段算法、并与 data.json 的分段结果
+         逐段核对，全对上才显示 —— 对不上宁可不显示，也不给一个可能骗人的教学例子 -->
+    <details id="traceBox" hidden>
+      <summary>「从 0 重新开始长」的起点到底是怎么定的？点开看一段真实数据的逐月推演</summary>
+      <div class="trace-body">
+        <div style="margin:4px 0 2px">
+          先记三条规则，下面的表就是它们在最近一次顶和底上的逐月执行过程：<br>
+          <b>① 起点是"事后追认"的</b>：某个月是不是顶/底，当时不知道，要等价格从它反向走满
+          <span class="trace-rev">10%</span> 才回头认定。<br>
+          <b>② 前一段的终点＝后一段的起点</b>：顶既是牛市的结尾、又是熊市的开头，
+          所以每根柱子都从 0 重新长。<br>
+          <b>③ <span class="trace-rev">10%</span> 从极值算、不从起点算</b>：作用是滤掉小抖动，
+          否则价格每抖一下都得分一段。
+        </div>
+        <div class="trace-wrap"><table id="traceTable"></table></div>
+        <div class="m2" id="traceFoot"></div>
+      </div>
+    </details>
   </div>
   <div class="note">
     <b>中层｜估值色带（图的背景色）</b>：红=贵、蓝=便宜。<br>
@@ -331,9 +371,96 @@ const priceAsOf = m => (m.sources && m.sources.price && m.sources.price.latest_d
 const priceIsOfficialClose = m => !!(m.sources && m.sources.price
                                   && m.sources.price.latest_source === 'fred');
 
+// ── 「起点是怎么定的」逐月推演 ──────────────────────────────────────────
+// 在浏览器里把 build.py 的 ZigZag 分段规则原样重放一遍（同一份 d.price、同一个阈值），
+// 逐月记下"算法当时在想什么"，然后截取最近一次 顶→底→确认转牛 的窗口渲染成表。
+// 🔴 fail-closed：重放出的全部转折点必须与 data.json 里的分段逐一相同，差一个就不显示
+//    （教学例子错了比没有更糟）。重放从图表起点开始、cycles 里第一段起点可能更早，
+//    所以只比"转折点"（每段的 end），不比第一段的 start。
+function buildTrace(d){
+  const box = document.getElementById('traceBox');
+  if(!box) return;
+  const esc = v => String(v).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;');
+  try{
+    const rev = d.meta.params.reversal_pct / 100;
+    const months = d.price.map(r=>r[0]);
+    const prices = d.price.map(r=>r[1]);
+    const revTxt = d.meta.params.reversal_pct + '%';
+    document.querySelectorAll('.trace-rev').forEach(el=>el.textContent = revTxt);
+
+    // —— 重放（与 build.py find_cycles 逐行对应）——
+    const rows = [];          // {m, price, note, cls}
+    const turns = [];         // 每次确认转势时被追认的极值月
+    const confirmAt = new Map(); // 极值月 → 在哪个月被确认
+    let rising = true, ext = 0;
+    const pctFrom = i => (prices[i]/prices[ext]-1)*100;
+    for(let i=1;i<months.length;i++){
+      const pc = pctFrom(i);
+      let note='', cls='';
+      if(rising){
+        if(prices[i] > prices[ext]){ ext=i; note='新高 → 顶还没到，继续找'; }
+        else if(prices[i] <= prices[ext]*(1-rev)){
+          note = `距最高点已跌 <span class="strong-bear">${F(pc)}</span> ≥ ${esc(revTxt)} ⟹ `
+               + `<span class="strong-bear">确认转熊</span>；回头认定 <b>${esc(months[ext])}</b> 为顶`
+               + `＝牛市终点＝熊市起点`;
+          cls='turn-bear';
+          turns.push(months[ext]); confirmAt.set(months[ext], months[i]);
+          ext=i; rising=false;
+        }
+        else note = `回调，距最高点 ${F(pc)}（不到 ${esc(revTxt)}）→ 仍算同一段牛市`;
+      } else {
+        if(prices[i] < prices[ext]){ ext=i; note='新低 → 底还没到，继续找'; }
+        else if(prices[i] >= prices[ext]*(1+rev)){
+          note = `距最低点已涨 <span class="strong-bull">${F(pc)}</span> ≥ ${esc(revTxt)} ⟹ `
+               + `<span class="strong-bull">确认转牛</span>；回头认定 <b>${esc(months[ext])}</b> 为底`
+               + `＝熊市终点＝新牛市起点`;
+          cls='turn-bull';
+          turns.push(months[ext]); confirmAt.set(months[ext], months[i]);
+          ext=i; rising=true;
+        }
+        else note = `反弹，距最低点 ${F(pc)}（不到 ${esc(revTxt)}）→ 仍算同一段熊市`;
+      }
+      rows.push({ m:months[i], price:prices[i], note, cls });
+    }
+
+    // —— 自检：重放的转折点 == data.json 各段的 end（最后一段进行中，无 end 可比）——
+    const expected = d.cycles.slice(0,-1).map(c=>c.end);
+    if(turns.length !== expected.length || turns.some((t,i)=>t!==expected[i])){
+      console.warn('trace 重放与 data.json 分段不一致，逐月推演不显示', {turns, expected});
+      return;                                      // 保持 hidden
+    }
+
+    // —— 截窗口：最近一次已确认的熊（顶前 3 个月 → 确认转牛后 2 个月）——
+    const bears = d.cycles.filter(c=>c.kind==='bear' && c.confirmed);
+    if(!bears.length) return;
+    const bear = bears[bears.length-1];
+    const peak = bear.start, bottom = bear.end;
+    const cBull = confirmAt.get(bottom);
+    if(!cBull) return;
+    const iOf = m => rows.findIndex(r=>r.m===m);
+    const w0 = Math.max(0, iOf(peak)-3), w1 = Math.min(rows.length-1, iOf(cBull)+2);
+    const win = rows.slice(w0, w1+1);
+
+    const fp = v => v.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2});
+    document.getElementById('traceTable').innerHTML =
+      '<tr><th>月份</th><th style="text-align:right">价格</th><th>算法当时在想什么</th></tr>'
+      + win.map(r=>`<tr${r.cls?` class="${r.cls}"`:''}><td class="mo">${esc(r.m)}</td>`
+                 + `<td class="px">${esc(fp(r.price))}</td><td>${r.note}</td></tr>`).join('');
+    document.getElementById('traceFoot').innerHTML =
+      `以上每一行都是真实数据（multpl 月度价）。表里的顶 <b>${esc(peak)}</b>、底 <b>${esc(bottom)}</b> `
+      + `正是图上最近那段红色的两端；图上最右那根绿柱的 0%，就落在 <b>${esc(bottom)}</b>。`
+      + `页面加载时已在浏览器里把这套规则对全部历史重放了一遍，与图上 ${d.cycles.length} 段`
+      + `逐段核对一致后才显示本表 —— 对不上会宁可整块不显示。`;
+    box.hidden = false;
+  }catch(e){
+    console.warn('trace 构建失败，逐月推演不显示', e);
+  }
+}
+
 function render(d){
   const m = d.meta, L = m.latest, P = m.params;
   document.getElementById('p-rev').textContent = P.reversal_pct + '%';
+  buildTrace(d);   // 「起点怎么定的」逐月推演（内部自检通过才显示）
   document.getElementById('p-cape').textContent = P.cape_years;
   const eEl = document.getElementById('p-earn');
   if(eEl) eEl.textContent = m.sources.earnings.latest;
