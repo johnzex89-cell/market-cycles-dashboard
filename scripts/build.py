@@ -408,6 +408,21 @@ def main() -> int:
     # 同法自算 10 年版，仅用于跟 multpl 官方 CAPE10 交叉验证口径有没有漂（见 check_data.py）
     cape10_own = compute_cape(months, real_price, earnings, 10)
 
+    # —— 纳斯达克周期面板（ZC 260901：看纳指与标普的牛熊重合）——
+    # 同一套 find_cycles/cycle_paths、同一个 REVERSAL_PCT —— 规则必须同源，否则"重合"没有意义。
+    # 快照缺失 → nasdaq=None，前端不画该面板，页面其余照常（新增源不绑架老功能）。
+    nasdaq = None
+    nas_snap = load_optional("nasdaq_price")
+    if nas_snap and nas_snap.get("rows"):
+        nas_price = to_map(nas_snap)
+        nas_months = sorted(nas_price)
+        nas_prices = [nas_price[m] for m in nas_months]
+        nas_cycles = find_cycles(nas_months, nas_prices, REVERSAL_PCT)
+        nasdaq = {
+            "price": [[m, nas_price[m]] for m in nas_months],
+            "cycles": cycle_paths(nas_months, nas_prices, nas_cycles),
+        }
+
     # —— 第三层：宽度代理 ——
     breadth, vw_market, breadth_weights = compute_breadth(french_snap)
 
@@ -525,6 +540,9 @@ def main() -> int:
                             if fred_snap and fred_latest else None),
             "earnings": {"url": earn_snap["source_url"], "latest": max(earnings)},
             "cpi": {"url": cpi_snap["source_url"], "latest": max(cpi)},
+            "nasdaq": ({"url": nas_snap["source_url"], "latest": max(to_map(nas_snap)),
+                        "latest_date": nas_snap.get("latest_date"),
+                        "fetched_at": nas_snap["fetched_at"]} if nas_snap else None),
             "breadth_calibration": {
                 "mean_abs_dev_pp": round(vw_mean_dev, 4) if vw_mean_dev is not None else None,
                 "max_abs_dev_pp": round(vw_max_dev, 4) if vw_max_dev is not None else None,
@@ -597,6 +615,7 @@ def main() -> int:
         "cape5": [r for r in cape5 if r[0] >= CHART_START],
         "breadth": [r for r in breadth if r[0] >= CHART_START],
         "price": [[m, price[m]] for m in months if m >= CHART_START],
+        "nasdaq": nasdaq,
     }
 
     os.makedirs(DOCS_DIR, exist_ok=True)

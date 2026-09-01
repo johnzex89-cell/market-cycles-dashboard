@@ -162,6 +162,45 @@ def fetch_fred_sp500() -> None:
              extra={"latest_date": rows[-1][0], "latest_close": rows[-1][1]})
 
 
+def fetch_yahoo_nasdaq() -> None:
+    """纳斯达克综合指数（^IXIC）月度序列，给"纳指 vs 标普周期重合"面板用（ZC 260901 要的）。
+
+    数据源 Yahoo v8 chart 日线全历史（1971-02-05 基期 100 起，260901 实测 14008 根、无缺）。
+    🔴 **口径刻意与标普序列对齐**，否则两块面板没法比：
+      · 历史月 = **当月日收盘均值**（multpl 的标普月度值就是这个口径，260831 逐月实证 23/25 个月
+        偏差 0.000%）；
+      · 当月   = **最新一个交易日的收盘**（标普的当月点 260831 起用 FRED 官方收盘，同规则）。
+    Yahoo 对这种伪装 Chrome 的默认 UA 没有 FRED 那个挂死问题（global-markets 项目长期实证）。
+    """
+    now = int(time.time())
+    url = f"https://query1.finance.yahoo.com/v8/finance/chart/%5EIXIC?interval=1d&period1=0&period2={now}"
+    # 🔴 260901 实测：完整 Chrome UA 被 Yahoo 429（连续两次），换成简短 UA 立刻通过 ——
+    #    与 global-markets 项目"UA 带 compatible 短串"一致。Yahoo 和 FRED 各挑各的 UA，别混用。
+    j = json.loads(http_get(url, ua="Mozilla/5.0 (compatible; market-cycles-dashboard)").decode("utf-8", "ignore"))
+    res = j.get("chart", {}).get("result")
+    if not res:
+        raise RuntimeError("yahoo ^IXIC: chart.result 为空，接口结构可能已改")
+    res = res[0]
+    ts = res.get("timestamp") or []
+    closes = (res.get("indicators", {}).get("quote") or [{}])[0].get("close") or []
+    by_month: dict[str, list[float]] = {}
+    last_day, last_close = None, None
+    for t, c in zip(ts, closes):
+        if not isinstance(c, (int, float)):
+            continue                      # Yahoo 假日行 close 为 null，跳过
+        day = dt.datetime.fromtimestamp(t, dt.timezone.utc).date()
+        by_month.setdefault(f"{day.year:04d}-{day.month:02d}", []).append(float(c))
+        last_day, last_close = day, float(c)
+    if len(by_month) < 600:               # ^IXIC 1971 至今应有 660+ 个月
+        raise RuntimeError(f"yahoo ^IXIC 只聚合出 {len(by_month)} 个月（应 ≥600），疑似被截断")
+    months = sorted(by_month)
+    rows = [[m, round(sum(by_month[m]) / len(by_month[m]), 2)] for m in months]
+    rows[-1][1] = round(last_close, 2)    # 当月点 = 最新收盘（对齐标普的 FRED 口径）
+    snapshot("nasdaq_price", url.split("?")[0], rows,
+             extra={"latest_date": last_day.isoformat(), "latest_close": round(last_close, 2),
+                    "note": "历史月=当月日收盘均值；最末月=最新收盘。与标普序列口径一致"})
+
+
 def fetch_french() -> None:
     """Kenneth French 的 size 组合月度收益，取全市场等权与市值加权。
 
@@ -279,6 +318,7 @@ def _split_french_sections(text: str) -> dict[str, tuple[list[str], list[list]]]
 SOURCES: list[tuple[str, Callable[[], None]]] = [
     ("标普月度价格", lambda: fetch_multpl("sp500_price", "s-p-500-historical-prices")),
     ("标普每日收盘（FRED，给当月点用）", fetch_fred_sp500),
+    ("纳斯达克月度（Yahoo，周期对比面板）", fetch_yahoo_nasdaq),
     ("标普月度盈利", lambda: fetch_multpl("sp500_earnings", "s-p-500-earnings")),
     ("CPI", lambda: fetch_multpl("cpi", "cpi")),
     ("Shiller CAPE10（交叉验证用）", lambda: fetch_multpl("cape10_reference", "shiller-pe")),

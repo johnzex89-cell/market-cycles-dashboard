@@ -323,6 +323,33 @@ def main() -> int:
             check(tm["ma12_realistic"]["final"] < tm["ma12_ideal"]["final"],
                   "加了税与延迟后趋势择时反而更好 —— 摩擦项多半没生效")
 
+    # ========== 11. 纳斯达克面板（260901 新增；快照缺失时跳过，缺失不算错）==========
+    nas = d.get("nasdaq")
+    if nas:
+        ncs = nas["cycles"]
+        check(30 <= len(ncs) <= 90, f"纳指周期段数 {len(ncs)} 不在 [30,90] 内")
+        for a, b in zip(ncs, ncs[1:]):
+            if a["kind"] == b["kind"]:
+                failures.append(f"纳指周期未交替：{a['start']} 与 {b['start']} 同为 {a['kind']}")
+                break
+            if a["end"] != b["start"]:
+                failures.append(f"纳指段不相接：{a['end']} vs {b['start']}")
+                break
+        for c in ncs:
+            if (c["kind"] == "bull") != (c["pct"] > 0):
+                failures.append(f"纳指段 {c['start']} 方向与幅度矛盾：{c['kind']} {c['pct']}")
+                break
+            if c["points"][0][1] != 0.0:
+                failures.append(f"纳指段 {c['start']} 首点不为 0：{c['points'][0]}")
+                break
+        nprices = [v for _, v in nas["price"]]
+        check(all(v > 0 for v in nprices), "纳指价格序列存在非正值")
+        # 与标普的最新月对齐：允许差 1 个月（multpl 当月行出现的时间与 Yahoo 不同步）
+        nlast, slast = nas["price"][-1][0], latest["month"]
+        check(abs(month_num(nlast) - month_num(slast)) <= 1,
+              f"纳指最新月 {nlast} 与标普 {slast} 相差超过 1 个月，疑似某一侧断更")
+        check(nas["price"][0][0] == "1971-02", f"纳指起点 {nas['price'][0][0]} ≠ 1971-02（^IXIC 基期），上游数据变了")
+
     # —— 输出 ——
     print(f"自检目标：{os.path.relpath(target, ROOT)}")
     print(f"  周期 {len(cycles)} 段 | 最新 {latest['month']} 价格 {latest['price']} "
@@ -336,7 +363,7 @@ def main() -> int:
         for f_ in failures:
             print(f"   - {f_}")
         return 1
-    print("\n✅ 自检通过（10 组断言）")
+    print("\n✅ 自检通过（11 组断言）")
     return 0
 
 
