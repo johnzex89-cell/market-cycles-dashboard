@@ -395,6 +395,16 @@ function filledMonthsNote(m){
        + '用的是官方日收盘自算的当月日均（与 multpl 历史行同口径）';
 }
 
+// 历史点的来源标签。默认全是 multpl 月均；有补月时如实说明混了哪几个月。
+// 🔴 页面上任何"更早的每一点都是 multpl"这类断言都必须走这个函数，
+//    否则补月一出现，那句话就变成不实陈述。
+function priceHistLabel(m){
+  const f = m && m.sources && m.sources.price && m.sources.price.filled_months;
+  const ms = f ? Object.keys(f).sort() : [];
+  return ms.length ? `当月日均：${ms.join('、')} 为官方日收盘自算，其余为 multpl`
+                   : '当月日均（multpl 口径）';
+}
+
 // 最新那个点是不是已经换成官方收盘（build.py 写的 latest_source）。
 // 🔴 换了就必须在页面上说明口径不同：最后一点＝**单日收盘**，它前面每一点＝**当月日均**。
 // 不说的话，图上最后那截的斜率会被当成跟历史同口径的东西去读。
@@ -490,7 +500,7 @@ function buildTrace(d){
       + win.map(r=>`<tr${r.cls?` class="${r.cls}"`:''}><td class="mo">${esc(r.m)}</td>`
                  + `<td class="px">${esc(fp(r.price))}</td><td>${r.note}</td></tr>`).join('');
     document.getElementById('traceFoot').innerHTML =
-      `以上每一行都是真实数据（multpl 月度价）。表里的顶 <b>${esc(peak)}</b>、底 <b>${esc(bottom)}</b> `
+      `以上每一行都是真实数据（${priceHistLabel(d.meta)}）。表里的顶 <b>${esc(peak)}</b>、底 <b>${esc(bottom)}</b> `
       + `正是图上最近那段红色的两端；图上最右那根绿柱的 0%，就落在 <b>${esc(bottom)}</b>。`
       + `页面加载时已在浏览器里把这套规则对全部历史重放了一遍，与图上 ${d.cycles.length} 段`
       + `的类型和起止月逐段核对一致后才显示本表 —— 对不上会宁可整块不显示。`;
@@ -649,7 +659,7 @@ function render(d){
      priceIsOfficialClose(m) ? `${H(priceAsOf(m))} · 官方收盘` : `${L.month} · 月内均价`,
      priceIsOfficialClose(m)
        ? `${priceAsOf(m)} 的官方收盘点位（FRED）。⚠️ 只有最新这一个点是单日收盘，`
-         + `图上更早的每一点都是当月日均（multpl 口径）—— 两者口径不同，别拿最后一截的斜率跟历史直接比。`
+         + `图上更早的每一点都是${priceHistLabel(m)} —— 与最新点口径不同，别拿最后一截的斜率跟历史直接比。`
        : `${L.month} 当月的平均收盘点位。用月均价而非月末收盘，是数据源决定的（见下方说明）。`],
 
     ['估值 (5年 CAPE)', L.cape5 ?? '—',
