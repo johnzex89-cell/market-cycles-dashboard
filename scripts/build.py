@@ -52,6 +52,9 @@ CAPE_MONTHS = CAPE_YEARS * 12
 BREADTH_WINDOW_MONTHS = 12  # 宽度指标的滚动窗口
 CHART_START = "1961-01"     # 图表起点，对齐原图
 MIN_MONTHS_FOR_CYCLES = 120  # 少于十年数据就别谈周期划分
+# multpl 月初还没发布上个月的均值时，用 FRED 日线自己算那个月。
+# 至少要这么多个交易日才肯算，防止拿半个月的数据冒充月均值（美股一个月约 19–23 个交易日）。
+MIN_TRADING_DAYS_FOR_MONTH_AVG = 15
 
 
 def load(name: str) -> dict:
@@ -73,6 +76,40 @@ def load_optional(name: str) -> dict | None:
 
 def to_map(snapshot: dict) -> dict[str, float]:
     return {ym: v for ym, v in snapshot["rows"]}
+
+
+def fill_gaps_from_daily(price: dict[str, float],
+                        daily_rows: list) -> dict[str, float]:
+    """multpl 缺的月份，用 FRED 日线自己算当月日均补上，返回 {月份: 值}。
+
+    🔴 为什么可以这么补（260831 已实测，不是近似）：multpl 月度表的历史行口径
+    **就是当月每日收盘的平均值**，拿日线逐月复算，25 个完整月里 23 个偏差 0.000%。
+    所以这不是拿替代品凑数，是用同一套算法自己算一遍。
+
+    🔴 为什么需要它（260904 实测）：multpl 表里始终挂一行"当月实时价"。月初那行
+    滚到新月份、而上个月的正式均值还没发布 ⟹ 中间空一个月，自检判断月份不连续、
+    整条流水线停摆。260902/0903 连挂两天就是这个。
+
+    只补**内部空洞**（在 multpl 覆盖区间之内），不做任何外推；
+    交易日不足 MIN_TRADING_DAYS_FOR_MONTH_AVG 的月份宁可不补，留给自检去拦。
+    """
+    if not price or not daily_rows:
+        return {}
+    lo, hi = min(price), max(price)
+    by_month: dict[str, list[float]] = {}
+    for day, close in daily_rows:
+        ym = day[:7]
+        if ym in price or not (lo < ym < hi):
+            continue                      # 已有的月份不动；区间外不外推
+        try:
+            by_month.setdefault(ym, []).append(float(close))
+        except (TypeError, ValueError):
+            continue                      # FRED 用 "." 表示休市，跳过
+    filled = {}
+    for ym, closes in by_month.items():
+        if len(closes) >= MIN_TRADING_DAYS_FOR_MONTH_AVG:
+            filled[ym] = round(sum(closes) / len(closes), 2)
+    return filled
 
 
 def find_cycles(months: list[str], prices: list[float], reversal: float) -> list[dict]:
@@ -385,9 +422,20 @@ def main() -> int:
     price_latest_source = "multpl"
     fred_snap = load_optional("sp500_daily_fred")
     fred_latest = None
+    filled_months: dict[str, float] = {}
     if fred_snap and fred_snap.get("rows"):
         f_day, f_close = fred_snap["rows"][-1]
         fred_latest = (f_day, f_close)
+
+        # —— 先补 multpl 的内部空洞（260904 加）——
+        # 月初 multpl 把"当月实时价"那行滚到新月份、上个月正式均值还没发 ⟹ 中间空一个月。
+        # 用自家 FRED 日线算那个月的日均补上（同一套口径，见 fill_gaps_from_daily 的注释）。
+        filled_months = fill_gaps_from_daily(price, fred_snap["rows"])
+        price.update(filled_months)
+        if filled_months:
+            print(f"  multpl 缺月已用 FRED 日均补齐："
+                  f"{', '.join(f'{m}={v}' for m, v in sorted(filled_months.items()))}")
+
         if f_day[:7] >= max(price):          # FRED 已进到 multpl 的最新月（或更新的月）
             price[f_day[:7]] = round(float(f_close), 2)
             price_latest_date = f_day
@@ -532,6 +580,9 @@ def main() -> int:
                       "latest_date": price_latest_date,
                       # multpl=当月日均口径；fred=当月点已换成官方单日收盘（前端据此写口径说明）
                       "latest_source": price_latest_source,
+                      # 这些月份 multpl 当时没发，值是用 FRED 日线自己算的当月日均
+                      # （与 multpl 历史行同口径）。空 = 全部来自 multpl。
+                      "filled_months": {m: v for m, v in sorted(filled_months.items())},
                       "fetched_at": price_snap["fetched_at"]},
             "price_daily": ({"url": fred_snap["source_url"],
                              "latest_date": fred_latest[0],
