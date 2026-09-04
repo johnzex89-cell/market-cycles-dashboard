@@ -78,38 +78,50 @@ def to_map(snapshot: dict) -> dict[str, float]:
     return {ym: v for ym, v in snapshot["rows"]}
 
 
+def prev_month(ym: str) -> str:
+    y, m = int(ym[:4]), int(ym[5:7])
+    return f"{y - 1}-12" if m == 1 else f"{y}-{m - 1:02d}"
+
+
 def fill_gaps_from_daily(price: dict[str, float],
-                        daily_rows: list) -> dict[str, float]:
-    """multpl 缺的月份，用 FRED 日线自己算当月日均补上，返回 {月份: 值}。
+                         daily_rows: list) -> dict[str, float]:
+    """multpl 月初没发上个月均值时，用 FRED 日线自己算那个月的日均补上。
 
-    🔴 为什么可以这么补（260831 已实测，不是近似）：multpl 月度表的历史行口径
+    🔴 为什么可以这么补（260831 实测，不是近似）：multpl 月度表历史行的口径
     **就是当月每日收盘的平均值**，拿日线逐月复算，25 个完整月里 23 个偏差 0.000%。
-    所以这不是拿替代品凑数，是用同一套算法自己算一遍。
 
-    🔴 为什么需要它（260904 实测）：multpl 表里始终挂一行"当月实时价"。月初那行
-    滚到新月份、而上个月的正式均值还没发布 ⟹ 中间空一个月，自检判断月份不连续、
-    整条流水线停摆。260902/0903 连挂两天就是这个。
+    🔴 为什么只补"紧挨最新月的前一个月"这一个洞（260904 对抗审 finding）：
+    最初写成"补 multpl 区间内任意内部空洞"，等于把 check_data 的检出能力削掉一块——
+    上游解析器回归、一次掉好几个 2016 年后的月份，本该报警的场景会被静默补平。
+    现在只认那个已知的月初空洞，**其它任何形态的缺月一律不补，交给自检去拦**。
 
-    只补**内部空洞**（在 multpl 覆盖区间之内），不做任何外推；
-    交易日不足 MIN_TRADING_DAYS_FOR_MONTH_AVG 的月份宁可不补，留给自检去拦。
+    🔴 为什么要查 FRED 快照的新鲜度（同上）：`fetch_data.py` 是**失败保留旧快照**的
+    fail-open 设计。若 FRED 在月中挂掉且一直没恢复，旧快照里那个月可能只有半个月的
+    交易日，凑够 15 天就会被平均成"当月均值"——一个假的、但能让序列连续从而骗过
+    自检的值。所以要求 **FRED 已经走到目标月之后**，以此证明该月在快照里是收全的。
     """
     if not price or not daily_rows:
         return {}
-    lo, hi = min(price), max(price)
-    by_month: dict[str, list[float]] = {}
+    months = sorted(price)
+    target = prev_month(months[-1])
+    if target in price or target <= months[0]:
+        return {}                       # 没洞，或洞在序列最前面（不补边界）
+    if prev_month(target) not in price:
+        return {}                       # 洞不止一个 ⟹ 不是已知形态，交给自检
+    fred_latest_month = max(day[:7] for day, _ in daily_rows)
+    if fred_latest_month <= target:
+        return {}                       # FRED 还没走过目标月 ⟹ 该月可能没收全
+    closes = []
     for day, close in daily_rows:
-        ym = day[:7]
-        if ym in price or not (lo < ym < hi):
-            continue                      # 已有的月份不动；区间外不外推
+        if day[:7] != target:
+            continue
         try:
-            by_month.setdefault(ym, []).append(float(close))
+            closes.append(float(close))
         except (TypeError, ValueError):
-            continue                      # FRED 用 "." 表示休市，跳过
-    filled = {}
-    for ym, closes in by_month.items():
-        if len(closes) >= MIN_TRADING_DAYS_FOR_MONTH_AVG:
-            filled[ym] = round(sum(closes) / len(closes), 2)
-    return filled
+            continue                    # FRED 用 "." 表示休市
+    if len(closes) < MIN_TRADING_DAYS_FOR_MONTH_AVG:
+        return {}
+    return {target: round(sum(closes) / len(closes), 2)}
 
 
 def find_cycles(months: list[str], prices: list[float], reversal: float) -> list[dict]:

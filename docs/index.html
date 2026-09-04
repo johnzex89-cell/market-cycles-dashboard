@@ -383,17 +383,6 @@ const H = v => String(v ?? '').replace(/&/g,'&amp;').replace(/</g,'&lt;')
 const priceAsOf = m => (m.sources && m.sources.price && m.sources.price.latest_date)
                     || (m.sources && m.sources.price && m.sources.price.latest) || '—';
 
-// multpl 月初尚未发布上个月均值时，build.py 会用 FRED 日线自算当月日均补上，
-// 并把补过的月份写进 sources.price.filled_months。口径与 multpl 历史行一致
-// （日收盘均值，25 个完整月里 23 个偏差 0.000%），但来源不同，这里如实标出来。
-function filledMonthsNote(m){
-  const f = m && m.sources && m.sources.price && m.sources.price.filled_months;
-  const ms = f ? Object.keys(f).sort() : [];
-  if(!ms.length) return '';
-  return '；其中 ' + ms.join('、') + ' multpl 当时还没发布，图上这'
-       + (ms.length > 1 ? '几个月' : '个月')
-       + '用的是官方日收盘自算的当月日均（与 multpl 历史行同口径）';
-}
 
 // 历史点的来源标签。默认全是 multpl 月均；有补月时如实说明混了哪几个月。
 // 🔴 页面上任何"更早的每一点都是 multpl"这类断言都必须走这个函数，
@@ -401,8 +390,9 @@ function filledMonthsNote(m){
 function priceHistLabel(m){
   const f = m && m.sources && m.sources.price && m.sources.price.filled_months;
   const ms = f ? Object.keys(f).sort() : [];
-  return ms.length ? `当月日均：${ms.join('、')} 为官方日收盘自算，其余为 multpl`
-                   : '当月日均（multpl 口径）';
+  // 不自带外层括号——调用处可能已经包在括号里（追溯表页脚），否则会套两层
+  return ms.length ? `当月日均：${ms.join('、')} 为官方日收盘自算，其余来自 multpl`
+                   : '当月日均，来自 multpl';
 }
 
 // 最新那个点是不是已经换成官方收盘（build.py 写的 latest_source）。
@@ -559,9 +549,8 @@ function render(d){
       + `<span>宽度 ${H(m.sources.breadth.latest)} · 盈利 ${H(m.sources.earnings.latest)}</span>`;
     chip.title = '股价（上层周期柱 + 背景估值带）更新到 ' + priceAsOf(m)
                + (priceIsOfficialClose(m)
-                  ? '——最新这个点是该日的官方收盘价（FRED），更早的每个点是当月日均（multpl），两者口径不同'
+                  ? `——最新这个点是该日的官方收盘价（FRED），更早的每个点是${priceHistLabel(m)}，口径不同`
                   : '（multpl 最新一行的日期，即最近一个交易日）')
-               + filledMonthsNote(m)
                + '；下层市场宽度更新到 ' + m.sources.breadth.latest
                + '；盈利定稿到 ' + m.sources.earnings.latest + '，之后的估值是初步值（图上斜纹段）';
   }

@@ -43,6 +43,15 @@ MAX_GENERATED_AGE_DAYS = 4             # data.json 生成时间距今，超了�
 MIN_TOP_DECILE_CAP_SHARE = 0.40        # 最大一档的市值占比（实测 0.78；简单平均会退化成 0.10）
 
 
+# 补月复核用：与 build.py 的 MIN_TRADING_DAYS_FOR_MONTH_AVG 对齐（美股一个月约 19–23 个交易日）
+MIN_TRADING_DAYS_FOR_FILL = 15
+
+
+def prev_month(ym: str) -> str:
+    y, m = int(ym[:4]), int(ym[5:7])
+    return f"{y - 1}-12" if m == 1 else f"{y}-{m - 1:02d}"
+
+
 def month_num(ym: str) -> int:
     return int(ym[:4]) * 12 + int(ym[5:7])
 
@@ -162,6 +171,52 @@ def main() -> int:
           and latest["cycle_start"] == last_cycle["start"]
           and abs(latest["cycle_pct"] - last_cycle["pct"]) < 0.15,
           "meta.latest 的周期信息与最后一段 cycles 不一致")
+
+    # ========== 4.5 补月必须独立复算得出同一个值（260904 对抗审 finding）==========
+    # build.py 会在 multpl 缺上个月时用 FRED 日线自算日均补进价格序列。
+    # 🔴 这是一条**新增的数据通路，而它一度没有任何守卫**：补出来的值只要能让序列连续，
+    #    上面所有断言就都过了——包括拿半个月交易日凑出来的假"月均"。
+    # 这里不信 build 的自述，拿 price 序列里的值和 price_daily 独立复算的结果对账。
+    filled = sources.get("price", {}).get("filled_months") or {}
+    if filled:
+        price_rows = dict(d["price"]) if isinstance(d.get("price"), list) else {}
+        months_sorted = sorted(price_rows)
+        for ym, val in sorted(filled.items()):
+            # ① 补的必须是"紧挨最新月的前一个月"，别的形态说明 build 逻辑跑偏了
+            check(ym == prev_month(months_sorted[-1]) if months_sorted else False,
+                  f"补月 {ym} 不是最新月的前一个月（最新月 {months_sorted[-1] if months_sorted else '?'}）"
+                  f"——只允许补已知的月初空洞")
+            # ② 序列里那个点必须就是 filled_months 声明的值
+            check(abs(price_rows.get(ym, float("nan")) - val) < 0.005,
+                  f"补月 {ym} 序列值 {price_rows.get(ym)} 与 filled_months 声明的 {val} 不一致")
+        # ③ 拿日线独立复算，值必须对得上；且 FRED 必须已走过被补的月份（证明该月收全了）
+        daily_path = os.path.join(os.path.dirname(DATA_JSON), "..", "data",
+                                  "sp500_daily_fred.json")
+        daily_path = os.path.normpath(daily_path)
+        if not os.path.exists(daily_path):
+            failures.append(f"存在补月 {sorted(filled)} 却找不到日线快照 {daily_path}，无法复核")
+        else:
+            with open(daily_path, encoding="utf-8") as fh:
+                drows = json.load(fh).get("rows", [])
+            fred_latest_month = max((day[:7] for day, _ in drows), default="")
+            for ym, val in sorted(filled.items()):
+                check(fred_latest_month > ym,
+                      f"补月 {ym} 时日线快照只到 {fred_latest_month}，该月可能没收全 "
+                      f"⟹ 算出来的是半个月的假均值")
+                closes = []
+                for day, close in drows:
+                    if day[:7] != ym:
+                        continue
+                    try:
+                        closes.append(float(close))
+                    except (TypeError, ValueError):
+                        continue
+                check(len(closes) >= MIN_TRADING_DAYS_FOR_FILL,
+                      f"补月 {ym} 只有 {len(closes)} 个交易日，不足 {MIN_TRADING_DAYS_FOR_FILL} 天")
+                if closes:
+                    recomputed = round(sum(closes) / len(closes), 2)
+                    check(abs(recomputed - val) < 0.005,
+                          f"补月 {ym} 独立复算得 {recomputed}，与 data.json 里的 {val} 不符")
 
     # ========== 5. 数据新鲜度 + 各源新旧混用（旧版全漏）==========
     price_age = (today - month_to_date(latest["month"])).days
