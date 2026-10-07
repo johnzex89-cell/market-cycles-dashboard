@@ -18,6 +18,9 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: 回归测试（正常取整通过、错误最高点仍拦截）
+        run: python3 -m unittest discover -s tests -v
+
       - name: 抓取数据源
         run: python3 scripts/fetch_data.py
 

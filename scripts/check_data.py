@@ -344,10 +344,10 @@ def main() -> int:
         ath = pb.get("ath")
         check(isinstance(ath, (int, float)) and ath > 0, "playbook.ath 缺失或非正数")
         if ath:
-            # build.py 写的是 round(ath, 1)（页面按 1 位小数展示），所以容差必须 ≥0.05，
-            # 不能用 1e-6 要求精确相等 —— 只要历史最高点那个月的价格带两位小数（如 7741.36），
-            # 自检就永远不过、自动更新永远推不上线。260818–260823 连挂 6 天就是这条。
-            check(abs(ath - max(v for _, v in d["price"])) < 0.05,
+            # build.py 输出一位小数：核对同样取整后的历史最高点，而非与原值作容差比较。
+            # 7773.95 → 7773.9 的差会略大于 0.05；正常取整不能被误判为坏数据。
+            # 精确核对展示值，同时继续拒绝填错最高点或未按约定取整的值。
+            check(ath == round(max(v for _, v in d["price"]), 1),
                   f"playbook.ath={ath} 与价格序列的最高点不一致")
             for t in pb.get("tiers", []):
                 want = ath * (1 - t["drop_pct"] / 100)
