@@ -92,6 +92,7 @@ docs/                   GitHub Pages 目录（index.html + data.json）
 - 新增 `tests/test_ath_rounding.py`，每日抓取前自动执行；手动可运行 `python3 -m unittest discover -s tests -v`。
 - 隔离完整计算复现原检查失败、修后通过，故意填错最高点仍失败；原公开快照的11组检查也通过。正常取整/多种边界/历史最高而非最新/错误值四组回归通过。
 - 前次 Pages 发布任务因 GitHub 多次未分配到托管执行机而取消（没有执行任何构建步骤）；不是网页编译错误，继续沿用原 GitHub Pages 发布流程，不迁移或新增权限。
+- 修复提交 `d62afbe` 已上线，[补跑更新](https://github.com/johnzex89-cell/market-cycles-dashboard/actions/runs/37575644536)及[新数据发布](https://github.com/johnzex89-cell/market-cycles-dashboard/actions/runs/37575681973)均成功；页面生成于北京时间2026-10-07 13:18，股价已从10月2日更新到10月6日，网页与仓库快照一致，图表/档位显示正常。原发件邮箱、ECS任务和VPN未改；未来自动任务尚未发生，不把单次成功当永久保证。
 
 ## 免责
 
